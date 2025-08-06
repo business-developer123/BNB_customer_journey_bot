@@ -1,4 +1,12 @@
 import User, { IUser } from '../models/User';
+import { 
+  getUserWallet, 
+  createWalletForUser, 
+  updateUserWallet, 
+  getUserWalletInfo as getWalletInfo, 
+  getUserWalletInfoWithTokens as getWalletInfoWithTokens,
+  hasWallet as userHasWallet 
+} from './walletService';
 
 // Check if user is already registered
 export async function isUserRegistered(telegramId: number): Promise<boolean> {
@@ -111,4 +119,34 @@ export async function getOrCreateUserWithUpdate(userData: {
     console.error('Error in getOrCreateUserWithUpdate:', error);
     throw error;
   }
+}
+
+// Check if user has wallet (delegates to walletService)
+export async function hasWallet(telegramId: number): Promise<boolean> {
+  return await userHasWallet(telegramId);
+}
+
+// Get user wallet info with balance (delegates to walletService)
+export async function getUserWalletInfo(telegramId: number): Promise<{
+  address: string;
+  isCustom: boolean;
+  balance: string;
+} | null> {
+  return await getWalletInfo(telegramId);
+}
+
+// Get user wallet info with all token balances (delegates to walletService)
+export async function getUserWalletInfoWithTokens(telegramId: number): Promise<{
+  address: string;
+  isCustom: boolean;
+  nativeBalance: string;
+  tokens: Array<{
+    balance: string;
+    symbol: string;
+    name: string;
+    decimals: number;
+    address: string;
+  }>;
+} | null> {
+  return await getWalletInfoWithTokens(telegramId);
 } 
