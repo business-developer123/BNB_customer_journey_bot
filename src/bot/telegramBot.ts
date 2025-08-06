@@ -1,7 +1,7 @@
 import TelegramBot from 'node-telegram-bot-api';
 import { getOrCreateUser, isUserRegistered, hasWallet, getUserWalletInfo, getUserWalletInfoWithTokens } from '../services/userService';
-import { createWalletForUser, updateUserWallet } from '../services/walletService';
-import { formatTokenBalance } from '../utils/blockchainUtils';
+import { createWalletForUser, updateUserWallet, getUserWallet } from '../services/walletService';
+import { formatTokenBalance, transferToken, transferBNB } from '../utils/blockchainUtils';
 import dotenv from 'dotenv';
 
 dotenv.config({ debug: false, override: true });
@@ -9,7 +9,27 @@ const botToken = process.env.TELEGRAM_BOT_TOKEN;
 
 const bot = new TelegramBot(botToken as string, { polling: true });
 
-const userStates: { [key: number]: { state: string; data?: any; tokens?: any[]; walletAddress?: string; isCustom?: boolean; lastTokenPage?: number } } = {};
+// Helper function to determine network and get network info
+function getNetworkInfo() {
+  const bnbRpcProvider = process.env.BNB_RPC_PROVIDER;
+  const isTestnet = bnbRpcProvider?.includes('testnet') || bnbRpcProvider?.includes('bsc-testnet') || bnbRpcProvider?.includes('data-seed-prebsc');
+  const networkInfo = isTestnet ? '🟡 BSC Testnet' : '🟢 BSC Mainnet';
+  return { isTestnet, networkInfo };
+}
+
+const userStates: {
+  [key: number]: {
+    state: string;
+    data?: any;
+    tokens?: any[];
+    walletAddress?: string;
+    isCustom?: boolean;
+    lastTokenPage?: number;
+    transferTokens?: any[];
+    selectedToken?: any;
+    recipientAddress?: string;
+  }
+} = {};
 
 function createMainMenuKeyboard() {
   return {
@@ -37,6 +57,9 @@ function createWalletMenuKeyboard() {
       inline_keyboard: [
         [
           { text: '🪙 All Tokens', callback_data: 'tokens' }
+        ],
+        [
+          { text: '💸 Transfer Token', callback_data: 'transfer_token' }
         ],
         [
           { text: '📥 Import Wallet', callback_data: 'import_wallet' }
@@ -79,11 +102,11 @@ async function handleStart(msg: TelegramBot.Message) {
   try {
     // Check if user is already registered
     const isRegistered = await isUserRegistered(user.id);
-    
+
     if (isRegistered) {
       // User is already registered - check if they have a wallet first
       const hasExistingWallet = await hasWallet(user.id);
-      
+
       let walletStatus = '';
       if (hasExistingWallet) {
         // Only get basic wallet info without token balances
@@ -106,6 +129,8 @@ async function handleStart(msg: TelegramBot.Message) {
 `;
       }
 
+      const { networkInfo } = getNetworkInfo();
+      
       const welcomeBackMessage = `
 🎉 *Welcome back to Crypto Trading Bot!*
 
@@ -115,6 +140,7 @@ async function handleStart(msg: TelegramBot.Message) {
 • ID: ${user.id}
 
 ✅ *You are already registered!* No need to create a new account.
+🌐 *Network:* ${networkInfo}
 
 ${walletStatus}
 
@@ -122,8 +148,8 @@ ${walletStatus}
 `;
 
       const keyboard = createMainMenuKeyboard();
-      
-      await bot.sendMessage(chatId, welcomeBackMessage, { 
+
+      await bot.sendMessage(chatId, welcomeBackMessage, {
         parse_mode: 'Markdown',
         reply_markup: keyboard.reply_markup
       });
@@ -137,6 +163,8 @@ ${walletStatus}
         lastName: user.last_name
       });
 
+      const { networkInfo } = getNetworkInfo();
+      
       const welcomeMessage = `
 🎉 *Welcome to Crypto Trading Bot!*
 
@@ -146,6 +174,7 @@ ${walletStatus}
 • ID: ${user.id}
 
 ✅ *Registration successful!* Your account has been created.
+🌐 *Network:* ${networkInfo}
 
 💰 *Next Step:* Create your wallet to start trading!
 
@@ -153,8 +182,8 @@ ${walletStatus}
 `;
 
       const keyboard = createMainMenuKeyboard();
-      
-      await bot.sendMessage(chatId, welcomeMessage, { 
+
+      await bot.sendMessage(chatId, welcomeMessage, {
         parse_mode: 'Markdown',
         reply_markup: keyboard.reply_markup
       });
@@ -169,7 +198,7 @@ ${walletStatus}
 // Handle /help command
 async function handleHelp(msg: TelegramBot.Message) {
   const chatId = msg.chat.id;
-  
+
   const helpMessage = `
 📚 *Help & Commands*
 
@@ -195,7 +224,7 @@ Contact our support team for assistance.
 `;
 
   const keyboard = createMainMenuKeyboard();
-  await bot.sendMessage(chatId, helpMessage, { 
+  await bot.sendMessage(chatId, helpMessage, {
     parse_mode: 'Markdown',
     reply_markup: keyboard.reply_markup
   });
@@ -218,12 +247,30 @@ async function handleCallbackQuery(query: TelegramBot.CallbackQuery) {
       await handleTokensCallback(chatId, user, messageId, page);
       return;
     }
+    if (data.startsWith('select_token_')) {
+      const tokenIndex = parseInt(data.replace('select_token_', ''));
+      await handleTokenSelectionCallback(chatId, user, messageId, tokenIndex);
+      return;
+    }
+    if (data.startsWith('confirm_transfer_')) {
+      const amountStr = data.replace('confirm_transfer_', '');
+      const amount = parseFloat(amountStr);
+      if (isNaN(amount)) {
+        await bot.answerCallbackQuery(query.id, { text: 'Invalid amount' });
+        return;
+      }
+      await handleTransferConfirmation(chatId, user, messageId, amount);
+      return;
+    }
     switch (data) {
       case 'wallet':
         await handleWalletCallback(chatId, user, messageId);
         break;
       case 'tokens':
         await handleTokensCallback(chatId, user, messageId, 1);
+        break;
+      case 'transfer_token':
+        await handleTransferTokenCallback(chatId, user, messageId);
         break;
       case 'create_wallet':
         await handleCreateWalletCallback(chatId, user, messageId);
@@ -248,21 +295,29 @@ async function handleCallbackQuery(query: TelegramBot.CallbackQuery) {
 
 // Handle wallet callback
 async function handleWalletCallback(chatId: number, user: TelegramBot.User, messageId: number) {
+  // Clear transfer-related state when entering wallet menu
   if (userStates[user.id]) {
     delete userStates[user.id].tokens;
     delete userStates[user.id].walletAddress;
     delete userStates[user.id].isCustom;
     delete userStates[user.id].lastTokenPage;
+    delete userStates[user.id].transferTokens;
+    delete userStates[user.id].selectedToken;
+    delete userStates[user.id].recipientAddress;
+    userStates[user.id].state = '';
   }
   try {
     const walletInfo = await getUserWalletInfo(user.id);
-    
+
     if (walletInfo) {
+      const { networkInfo } = getNetworkInfo();
+      
       let walletMessage = `
 💰 *Your Wallet Information*
 
 📍 *Address:* \`${walletInfo.address}\`
 🔐 *Type:* ${walletInfo.isCustom ? 'Custom Wallet' : 'Auto-generated'}
+🌐 *Network:* ${networkInfo}
 
 💎 *Native Balance:*
 • BNB: ${parseFloat(walletInfo.balance).toFixed(6)} BNB
@@ -271,9 +326,9 @@ async function handleWalletCallback(chatId: number, user: TelegramBot.User, mess
 
 *Wallet Actions:*
 `;
-      
+
       const keyboard = createWalletMenuKeyboard();
-      await bot.editMessageText(walletMessage, { 
+      await bot.editMessageText(walletMessage, {
         chat_id: chatId,
         message_id: messageId,
         parse_mode: 'Markdown',
@@ -287,9 +342,9 @@ You don't have a wallet yet. Create one to start trading!
 
 *Options:*
 `;
-      
+
       const keyboard = createMainMenuKeyboard();
-      await bot.editMessageText(noWalletMessage, { 
+      await bot.editMessageText(noWalletMessage, {
         chat_id: chatId,
         message_id: messageId,
         parse_mode: 'Markdown',
@@ -309,7 +364,7 @@ async function handleCreateWalletCallback(chatId: number, user: TelegramBot.User
   try {
     // Check if user already has a wallet
     const hasExistingWallet = await hasWallet(user.id);
-    
+
     if (hasExistingWallet) {
       const keyboard = createMainMenuKeyboard();
       await bot.editMessageText('❌ You already have a wallet. Use "Import Wallet" to replace it with a different one.', {
@@ -322,7 +377,7 @@ async function handleCreateWalletCallback(chatId: number, user: TelegramBot.User
 
     // Create new wallet
     const wallet = await createWalletForUser(user.id);
-    
+
     const successMessage = `
 🎉 *Wallet Created Successfully!*
 
@@ -339,9 +394,9 @@ async function handleCreateWalletCallback(chatId: number, user: TelegramBot.User
 
 *Commands:*
 `;
-    
+
     const keyboard = createWalletMenuKeyboard();
-    await bot.editMessageText(successMessage, { 
+    await bot.editMessageText(successMessage, {
       chat_id: chatId,
       message_id: messageId,
       parse_mode: 'Markdown',
@@ -358,7 +413,7 @@ async function handleImportWalletCallback(chatId: number, user: TelegramBot.User
   try {
     // Set user state to waiting for private key
     userStates[user.id] = { state: 'waiting_for_private_key' };
-    
+
     const importMessage = `
 🔐 *Import Existing Wallet*
 
@@ -371,8 +426,8 @@ Please send your wallet's private key.
 
 *Format:* 64-character hexadecimal string (with or without 0x prefix)
 `;
-    
-    await bot.editMessageText(importMessage, { 
+
+    await bot.editMessageText(importMessage, {
       chat_id: chatId,
       message_id: messageId,
       parse_mode: 'Markdown',
@@ -414,7 +469,7 @@ Contact support or use the buttons below to navigate.
 `;
 
   const keyboard = createMainMenuKeyboard();
-  await bot.editMessageText(helpMessage, { 
+  await bot.editMessageText(helpMessage, {
     chat_id: chatId,
     message_id: messageId,
     parse_mode: 'Markdown',
@@ -424,6 +479,13 @@ Contact support or use the buttons below to navigate.
 
 // Handle main menu callback
 async function handleMainMenuCallback(chatId: number, user: TelegramBot.User, messageId: number) {
+  // Clear all user state when returning to main menu
+  if (userStates[user.id]) {
+    delete userStates[user.id];
+  }
+
+  const { networkInfo } = getNetworkInfo();
+
   const mainMenuMessage = `
 🎉 *Crypto Trading Bot - Main Menu*
 
@@ -437,14 +499,14 @@ Welcome to your crypto trading dashboard!
 
 *Quick Stats:*
 • Status: Active
-• Network: BNB Smart Chain
+• Network: ${networkInfo}
 • Trading: Coming Soon
 
 🚀 *Select an option below:*
 `;
 
   const keyboard = createMainMenuKeyboard();
-  await bot.editMessageText(mainMenuMessage, { 
+  await bot.editMessageText(mainMenuMessage, {
     chat_id: chatId,
     message_id: messageId,
     parse_mode: 'Markdown',
@@ -452,7 +514,7 @@ Welcome to your crypto trading dashboard!
   });
 }
 
-// Refactored handleTokensCallback to support pagination
+// Handle tokens callback with pagination
 async function handleTokensCallback(chatId: number, user: TelegramBot.User, messageId: number, page = 1) {
   try {
     // Check cache
@@ -484,21 +546,34 @@ async function handleTokensCallback(chatId: number, user: TelegramBot.User, mess
       userStates[user.id].walletAddress = walletInfo.address;
       userStates[user.id].isCustom = walletInfo.isCustom;
     }
-    const totalPages = tokens.length;
+
+    // Pagination logic - show 5 tokens per page
+    const tokensPerPage = 5;
+    const totalPages = Math.ceil(tokens.length / tokensPerPage);
     let currentPage = page;
     if (currentPage < 1) currentPage = 1;
     if (currentPage > totalPages) currentPage = totalPages;
+    
     userStates[user.id].lastTokenPage = currentPage;
-    const token = tokens[currentPage - 1];
+    
+    const startIndex = (currentPage - 1) * tokensPerPage;
+    const endIndex = Math.min(startIndex + tokensPerPage, tokens.length);
+    const pageTokens = tokens.slice(startIndex, endIndex);
+    
+    const { networkInfo } = getNetworkInfo();
+    
     let tokensMessage = `\n🪙 *All Token Balances*\n\n`;
     tokensMessage += `📍 *Wallet Address:* \`${userStates[user.id].walletAddress}\`\n`;
     tokensMessage += `🔐 *Wallet Type:* ${userStates[user.id].isCustom ? 'Custom Wallet' : 'Auto-generated'}\n`;
-    tokensMessage += `\n*Token ${currentPage} of ${totalPages}*\n`;
-    tokensMessage += `*Name:* ${token.name}\n`;
-    tokensMessage += `*Symbol:* ${token.symbol}\n`;
-    tokensMessage += `*Balance:* ${token.balance} ${token.symbol}\n`;
-    tokensMessage += `*Decimals:* ${token.decimals}\n`;
-    tokensMessage += `*Address:* \`${token.token_address}\`\n`;
+    tokensMessage += `🌐 *Network:* ${networkInfo}\n`;
+    tokensMessage += `\n*Page ${currentPage} of ${totalPages}*\n\n`;
+    
+    pageTokens.forEach((token, index) => {
+      tokensMessage += `*${startIndex + index + 1}. ${token.symbol} (${token.name})*\n`;
+      tokensMessage += `💰 Balance: ${token.balance} ${token.symbol}\n`;
+      tokensMessage += `📍 Address: \`${token.token_address}\`\n\n`;
+    });
+    
     // Pagination keyboard
     const buttons = [];
     if (currentPage > 1) {
@@ -532,6 +607,349 @@ async function handleTokensCallback(chatId: number, user: TelegramBot.User, mess
   }
 }
 
+// Handle transfer token callback
+async function handleTransferTokenCallback(chatId: number, user: TelegramBot.User, messageId: number) {
+  try {
+    // Clear any cached token data to ensure fresh fetch from correct network
+    if (userStates[user.id]) {
+      delete userStates[user.id].tokens;
+      delete userStates[user.id].walletAddress;
+      delete userStates[user.id].isCustom;
+      delete userStates[user.id].lastTokenPage;
+    }
+
+    const walletInfo = await getUserWalletInfoWithTokens(user.id);
+    if (!walletInfo || !walletInfo.tokens || walletInfo.tokens.length === 0) {
+      await bot.editMessageText('❌ *No tokens found*\n\nYou don\'t have any tokens to transfer.', {
+        chat_id: chatId,
+        message_id: messageId,
+        parse_mode: 'Markdown',
+        reply_markup: createWalletMenuKeyboard().reply_markup
+      });
+      return;
+    }
+
+    // Store tokens in user state for transfer flow
+    if (!userStates[user.id]) userStates[user.id] = { state: '' };
+    userStates[user.id].transferTokens = walletInfo.tokens;
+    userStates[user.id].state = 'selecting_token_for_transfer';
+
+    const { networkInfo } = getNetworkInfo();
+    
+    let transferMessage = `💸 *Transfer Token*\n\n`;
+    transferMessage += `📍 *Your Wallet:* \`${walletInfo.address}\`\n`;
+    transferMessage += `🌐 *Network:* ${networkInfo}\n\n`;
+    transferMessage += `*Select a token to transfer:*\n\n`;
+
+    walletInfo.tokens.forEach((token, index) => {
+      transferMessage += `${index + 1}. **${token.symbol}** (${token.name})\n`;
+      transferMessage += `   💰 Balance: ${token.balance} ${token.symbol}\n\n`;
+    });
+
+    const keyboard = {
+      reply_markup: {
+        inline_keyboard: [
+          ...walletInfo.tokens.map((_, index) => [{
+            text: `${index + 1}. ${walletInfo.tokens[index].symbol}`,
+            callback_data: `select_token_${index}`
+          }]),
+          [{ text: '🔙 Back', callback_data: 'wallet' }]
+        ]
+      }
+    };
+
+    await bot.editMessageText(transferMessage, {
+      chat_id: chatId,
+      message_id: messageId,
+      parse_mode: 'Markdown',
+      reply_markup: keyboard.reply_markup
+    });
+  } catch (error) {
+    console.error('Error handling transfer token callback:', error);
+    await bot.editMessageText('❌ Error loading tokens for transfer. Please try again.', {
+      chat_id: chatId,
+      message_id: messageId,
+      reply_markup: createWalletMenuKeyboard().reply_markup
+    });
+  }
+}
+
+// Handle token selection for transfer
+async function handleTokenSelectionCallback(chatId: number, user: TelegramBot.User, messageId: number, tokenIndex: number) {
+  try {
+    if (!userStates[user.id] || !userStates[user.id].transferTokens) {
+      await bot.editMessageText('❌ Session expired. Please try again.', {
+        chat_id: chatId,
+        message_id: messageId,
+        reply_markup: createWalletMenuKeyboard().reply_markup
+      });
+      return;
+    }
+
+    const selectedToken = userStates[user.id].transferTokens![tokenIndex];
+    userStates[user.id].selectedToken = selectedToken;
+    userStates[user.id].state = 'entering_recipient_address';
+
+    let transferMessage = `💸 *Transfer ${selectedToken.symbol}*
+
+`;
+    transferMessage += `*Selected Token:* ${selectedToken.name} (${selectedToken.symbol})
+`;
+    transferMessage += `*Your Balance:* ${selectedToken.balance} ${selectedToken.symbol}
+
+`;
+    transferMessage += `*Please enter the recipient wallet address:*
+`;
+    transferMessage += `(Send the address as a text message)`;
+
+    const keyboard = {
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: '🔙 Back to Token Selection', callback_data: 'transfer_token' }]
+        ]
+      }
+    };
+
+    await bot.editMessageText(transferMessage, {
+      chat_id: chatId,
+      message_id: messageId,
+      parse_mode: 'Markdown',
+      reply_markup: keyboard.reply_markup
+    });
+  } catch (error) {
+    console.error('Error handling token selection:', error);
+    await bot.editMessageText('❌ Error selecting token. Please try again.', {
+      chat_id: chatId,
+      message_id: messageId,
+      reply_markup: createWalletMenuKeyboard().reply_markup
+    });
+  }
+}
+
+// Handle recipient address input
+async function handleRecipientAddressInput(msg: TelegramBot.Message) {
+  const chatId = msg.chat.id;
+  const user = msg.from;
+  const recipientAddress = msg.text?.trim();
+
+  if (!user || !recipientAddress) {
+    await bot.sendMessage(chatId, '❌ Invalid address. Please try again.');
+    return;
+  }
+
+  try {
+    if (!userStates[user.id] || !userStates[user.id].selectedToken) {
+      await bot.sendMessage(chatId, '❌ Session expired. Please start transfer again.', {
+        reply_markup: createWalletMenuKeyboard().reply_markup
+      });
+      return;
+    }
+
+    // Validate address format
+    const { isValidWalletAddress } = await import('../utils/blockchainUtils');
+    if (!isValidWalletAddress(recipientAddress)) {
+      await bot.sendMessage(chatId, '❌ Invalid wallet address format. Please enter a valid BSC address.');
+      return;
+    }
+
+    userStates[user.id].recipientAddress = recipientAddress;
+    userStates[user.id].state = 'entering_amount';
+
+    const selectedToken = userStates[user.id].selectedToken;
+    let transferMessage = `💸 *Transfer ${selectedToken.symbol}*\n\n`;
+    transferMessage += `*Token:* ${selectedToken.name} (${selectedToken.symbol})\n`;
+    transferMessage += `*Recipient:* \`${recipientAddress}\`\n`;
+    transferMessage += `*Your Balance:* ${selectedToken.balance} ${selectedToken.symbol}\n\n`;
+    transferMessage += `*Please enter the amount to transfer:*\n`;
+    transferMessage += `(Send the amount as a number)`;
+
+    const keyboard = {
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: '🔙 Back to Token Selection', callback_data: 'transfer_token' }]
+        ]
+      }
+    };
+
+    await bot.sendMessage(chatId, transferMessage, {
+      parse_mode: 'Markdown',
+      reply_markup: keyboard.reply_markup
+    });
+  } catch (error) {
+    console.error('Error handling recipient address input:', error);
+    await bot.sendMessage(chatId, '❌ Error processing address. Please try again.');
+  }
+}
+
+// Handle amount input and execute transfer
+async function handleAmountInput(msg: TelegramBot.Message) {
+  const chatId = msg.chat.id;
+  const user = msg.from;
+  const amount = msg.text?.trim();
+
+  if (!user || !amount) {
+    await bot.sendMessage(chatId, '❌ Invalid amount. Please try again.');
+    return;
+  }
+
+  try {
+    if (!userStates[user.id] || !userStates[user.id].selectedToken || !userStates[user.id].recipientAddress) {
+      await bot.sendMessage(chatId, '❌ Session expired. Please start transfer again.', {
+        reply_markup: createWalletMenuKeyboard().reply_markup
+      });
+      return;
+    }
+
+    const selectedToken = userStates[user.id].selectedToken;
+    const recipientAddress = userStates[user.id].recipientAddress;
+    const transferAmount = parseFloat(amount);
+
+    if (isNaN(transferAmount) || transferAmount <= 0) {
+      await bot.sendMessage(chatId, '❌ Invalid amount. Please enter a positive number.');
+      return;
+    }
+
+    const userBalance = parseFloat(selectedToken.balance);
+    if (transferAmount > userBalance) {
+      await bot.sendMessage(chatId, `❌ Insufficient balance. You have ${userBalance} ${selectedToken.symbol}, but trying to transfer ${transferAmount} ${selectedToken.symbol}.`);
+      return;
+    }
+
+    // Show confirmation message
+    let confirmationMessage = `💸 *Transfer Confirmation*\n\n`;
+    confirmationMessage += `*Token:* ${selectedToken.name} (${selectedToken.symbol})\n`;
+    confirmationMessage += `*Amount:* ${transferAmount} ${selectedToken.symbol}\n`;
+    confirmationMessage += `*Recipient:* \`${recipientAddress}\`\n`;
+    confirmationMessage += `*Your Balance:* ${userBalance} ${selectedToken.symbol}\n\n`;
+    confirmationMessage += `*Please confirm the transfer:*`;
+
+    const keyboard = {
+      reply_markup: {
+        inline_keyboard: [
+          [
+            { text: '✅ Confirm Transfer', callback_data: `confirm_transfer_${transferAmount}` },
+            { text: '❌ Cancel', callback_data: 'wallet' }
+          ]
+        ]
+      }
+    };
+
+    await bot.sendMessage(chatId, confirmationMessage, {
+      parse_mode: 'Markdown',
+      reply_markup: keyboard.reply_markup
+    });
+  } catch (error) {
+    console.error('Error handling amount input:', error);
+    await bot.sendMessage(chatId, '❌ Error processing amount. Please try again.');
+  }
+}
+
+// Handle transfer confirmation and execute transfer
+async function handleTransferConfirmation(chatId: number, user: TelegramBot.User, messageId: number, amount: number) {
+  try {
+    if (!userStates[user.id] || !userStates[user.id].selectedToken || !userStates[user.id].recipientAddress) {
+      await bot.editMessageText('❌ Session expired. Please start transfer again.', {
+        chat_id: chatId,
+        message_id: messageId,
+        reply_markup: createWalletMenuKeyboard().reply_markup
+      });
+      return;
+    }
+
+    const selectedToken = userStates[user.id].selectedToken;
+    const recipientAddress = userStates[user.id].recipientAddress;
+    const senderWallet = await getUserWallet(user.id);
+
+    if (!senderWallet) {
+      await bot.editMessageText('❌ Wallet not found. Please create or import a wallet first.', {
+        chat_id: chatId,
+        message_id: messageId,
+        reply_markup: createWalletMenuKeyboard().reply_markup
+      });
+      return;
+    }
+
+    // Show processing message
+    await bot.editMessageText('🔄 *Processing Transfer...*\n\nPlease wait while we process your transaction.', {
+      chat_id: chatId,
+      message_id: messageId,
+      parse_mode: 'Markdown'
+    });
+
+    // Determine if this is a native BNB transfer or token transfer
+    const isNativeBNB = selectedToken.token_address === 'BNB' || selectedToken.symbol === 'BNB' || selectedToken.name === 'BNB';
+    
+    let transactionResult;
+    
+    if (isNativeBNB) {
+      // Transfer native BNB
+      const { transferBNB } = await import('../utils/blockchainUtils');
+      transactionResult = await transferBNB(
+        senderWallet.address,
+        recipientAddress!,
+        amount.toString()
+      );
+    } else {
+      // Transfer token
+      const { transferToken } = await import('../utils/blockchainUtils');
+      transactionResult = await transferToken(
+        senderWallet.address,
+        selectedToken.token_address,
+        amount.toString(),
+        recipientAddress!
+      );
+    }
+
+    // Show success message with transaction link
+    let successMessage = `✅ *Transfer Successful!*\n\n`;
+    successMessage += `*Token:* ${selectedToken.name} (${selectedToken.symbol})\n`;
+    successMessage += `*Amount:* ${amount} ${selectedToken.symbol}\n`;
+    successMessage += `*Recipient:* \`${recipientAddress}\`\n`;
+    successMessage += `*Transaction Hash:* \`${transactionResult.transactionHash}\`\n\n`;
+    
+    // Add BSCScan link for the transaction based on network
+    const { isTestnet } = getNetworkInfo();
+    const bscScanUrl = isTestnet 
+      ? `https://testnet.bscscan.com/tx/${transactionResult.transactionHash}`
+      : `https://bscscan.com/tx/${transactionResult.transactionHash}`;
+    const explorerName = isTestnet ? 'BscScan Testnet' : 'BscScan';
+    successMessage += `🔗 [View on ${explorerName}](${bscScanUrl})\n\n`;
+    successMessage += `*Your transfer has been completed successfully!*`;
+
+    // Clear transfer state
+    delete userStates[user.id].transferTokens;
+    delete userStates[user.id].selectedToken;
+    delete userStates[user.id].recipientAddress;
+    userStates[user.id].state = '';
+
+    const keyboard = {
+      reply_markup: {
+        inline_keyboard: [
+          [
+            { text: '📋 View Transaction', url: bscScanUrl },
+            { text: '🔙 Back to Wallet', callback_data: 'wallet' }
+          ]
+        ]
+      }
+    };
+
+    await bot.editMessageText(successMessage, {
+      chat_id: chatId,
+      message_id: messageId,
+      parse_mode: 'Markdown',
+      reply_markup: keyboard.reply_markup,
+      disable_web_page_preview: true
+    });
+  } catch (error) {
+    console.error('Error confirming transfer:', error);
+    await bot.editMessageText(`❌ Transfer failed: ${error instanceof Error ? error.message : 'Unknown error'}. Please try again.`, {
+      chat_id: chatId,
+      message_id: messageId,
+      reply_markup: createWalletMenuKeyboard().reply_markup
+    });
+  }
+}
+
 // Handle /wallet command
 async function handleWallet(msg: TelegramBot.Message) {
   const chatId = msg.chat.id;
@@ -544,7 +962,7 @@ async function handleWallet(msg: TelegramBot.Message) {
 
   try {
     const walletInfo = await getUserWalletInfo(user.id);
-    
+
     if (walletInfo) {
       let walletMessage = `
 💰 *Your Wallet Information*
@@ -559,9 +977,9 @@ async function handleWallet(msg: TelegramBot.Message) {
 
 *Wallet Actions:*
 `;
-      
+
       const keyboard = createWalletMenuKeyboard();
-      await bot.sendMessage(chatId, walletMessage, { 
+      await bot.sendMessage(chatId, walletMessage, {
         parse_mode: 'Markdown',
         reply_markup: keyboard.reply_markup
       });
@@ -573,9 +991,9 @@ You don't have a wallet yet. Create one to start trading!
 
 *Options:*
 `;
-      
+
       const keyboard = createMainMenuKeyboard();
-      await bot.sendMessage(chatId, noWalletMessage, { 
+      await bot.sendMessage(chatId, noWalletMessage, {
         parse_mode: 'Markdown',
         reply_markup: keyboard.reply_markup
       });
@@ -599,7 +1017,7 @@ async function handleCreateWallet(msg: TelegramBot.Message) {
   try {
     // Check if user already has a wallet
     const hasExistingWallet = await hasWallet(user.id);
-    
+
     if (hasExistingWallet) {
       const keyboard = createMainMenuKeyboard();
       await bot.sendMessage(chatId, '❌ You already have a wallet. Use "Import Wallet" to replace it with a different one.', {
@@ -610,7 +1028,7 @@ async function handleCreateWallet(msg: TelegramBot.Message) {
 
     // Create new wallet
     const wallet = await createWalletForUser(user.id);
-    
+
     const successMessage = `
 🎉 *Wallet Created Successfully!*
 
@@ -627,9 +1045,9 @@ async function handleCreateWallet(msg: TelegramBot.Message) {
 
 *Commands:*
 `;
-    
+
     const keyboard = createWalletMenuKeyboard();
-    await bot.sendMessage(chatId, successMessage, { 
+    await bot.sendMessage(chatId, successMessage, {
       parse_mode: 'Markdown',
       reply_markup: keyboard.reply_markup
     });
@@ -652,7 +1070,7 @@ async function handleImportWallet(msg: TelegramBot.Message) {
   try {
     // Set user state to waiting for private key
     userStates[user.id] = { state: 'waiting_for_private_key' };
-    
+
     const importMessage = `
 🔐 *Import Existing Wallet*
 
@@ -665,8 +1083,8 @@ Please send your wallet's private key.
 
 *Format:* 64-character hexadecimal string (with or without 0x prefix)
 `;
-    
-    await bot.sendMessage(chatId, importMessage, { 
+
+    await bot.sendMessage(chatId, importMessage, {
       parse_mode: 'Markdown',
       reply_markup: {
         inline_keyboard: [
@@ -704,7 +1122,7 @@ async function handlePrivateKeyInput(msg: TelegramBot.Message) {
 
     // Update wallet with private key
     const wallet = await updateUserWallet(user.id, privateKey);
-    
+
     const successMessage = `
 ✅ *Wallet Imported Successfully!*
 
@@ -716,9 +1134,9 @@ async function handlePrivateKeyInput(msg: TelegramBot.Message) {
 
 *Commands:*
 `;
-    
+
     const keyboard = createWalletMenuKeyboard();
-    await bot.sendMessage(chatId, successMessage, { 
+    await bot.sendMessage(chatId, successMessage, {
       parse_mode: 'Markdown',
       reply_markup: keyboard.reply_markup
     });
@@ -736,7 +1154,7 @@ async function handlePrivateKeyInput(msg: TelegramBot.Message) {
 async function handleUnknownCommand(msg: TelegramBot.Message) {
   const chatId = msg.chat.id;
   const user = msg.from;
-  
+
   if (!user) {
     await bot.sendMessage(chatId, '❌ Error: User information not available');
     return;
@@ -748,7 +1166,7 @@ async function handleUnknownCommand(msg: TelegramBot.Message) {
     await handlePrivateKeyInput(msg);
     return;
   }
-  
+
   const unknownMessage = `
 ❓ *Unknown Command*
 
@@ -761,7 +1179,7 @@ Please use one of these commands or the buttons below:
 `;
 
   const keyboard = createMainMenuKeyboard();
-  await bot.sendMessage(chatId, unknownMessage, { 
+  await bot.sendMessage(chatId, unknownMessage, {
     parse_mode: 'Markdown',
     reply_markup: keyboard.reply_markup
   });
@@ -771,25 +1189,41 @@ Please use one of these commands or the buttons below:
 function setupBotHandlers() {
   // Handle /start command
   bot.onText(/\/start/, handleStart);
-  
+
   // Handle /help command
   bot.onText(/\/help/, handleHelp);
-  
+
   // Handle /wallet command
   bot.onText(/\/wallet/, handleWallet);
-  
+
   // Handle /create_wallet command
   bot.onText(/\/create_wallet/, handleCreateWallet);
-  
+
   // Handle /import_wallet command
   bot.onText(/\/import_wallet/, handleImportWallet);
-  
+
   // Handle callback queries (button clicks)
   bot.on('callback_query', handleCallbackQuery);
-  
+
   // Handle all other messages
   bot.on('message', (msg) => {
     if (msg.text && !msg.text.startsWith('/')) {
+      const user = msg.from;
+      if (!user) return;
+
+      const userState = userStates[user.id];
+      if (userState) {
+        if (userState.state === 'waiting_for_private_key') {
+          handlePrivateKeyInput(msg);
+          return;
+        } else if (userState.state === 'entering_recipient_address') {
+          handleRecipientAddressInput(msg);
+          return;
+        } else if (userState.state === 'entering_amount') {
+          handleAmountInput(msg);
+          return;
+        }
+      }
       handleUnknownCommand(msg);
     }
   });

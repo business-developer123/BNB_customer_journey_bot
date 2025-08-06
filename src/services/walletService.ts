@@ -216,3 +216,18 @@ export async function getAllWallets(): Promise<Array<{ telegramId: number; addre
     return [];
   }
 } 
+
+// Get private key for a given wallet address
+export async function getUserWalletPrivateKey(senderAddress: string): Promise<string | null> {
+  try {
+    // Find the user by wallet address
+    const user = await User.findOne({ 'wallet.address': senderAddress });
+    if (!user || !user.wallet || !user.wallet.privateKey) {
+      return null;
+    }
+    return user.wallet.privateKey;
+  } catch (error) {
+    console.error('Error getting user wallet private key:', error);
+    return null;
+  }
+} 
