@@ -1,5 +1,5 @@
 import User, { IUser } from '../models/User';
-import { generateWallet, createWalletFromPrivateKey, getWalletBalance, getAllTokenBalances } from '../utils/blockchainUtils';
+import { generateWallet, createWalletFromPrivateKey, getWalletBalance, getAllTokensInfoOfUserWallet } from '../utils/blockchainUtils';
 
 // Get user's wallet from database
 export async function getUserWallet(telegramId: number): Promise<{ address: string; isCustom: boolean } | null> {
@@ -142,13 +142,12 @@ export async function getUserWalletInfo(telegramId: number): Promise<{
 export async function getUserWalletInfoWithTokens(telegramId: number): Promise<{
   address: string;
   isCustom: boolean;
-  nativeBalance: string;
   tokens: Array<{
     balance: string;
     symbol: string;
     name: string;
     decimals: number;
-    address: string;
+    token_address: string;
   }>;
 } | null> {
   try {
@@ -164,12 +163,11 @@ export async function getUserWalletInfoWithTokens(telegramId: number): Promise<{
     }
 
     // Get all token balances using blockchain utility
-    const tokenBalances = await getAllTokenBalances(wallet.address);
+    const allTokensInfo = await getAllTokensInfoOfUserWallet(wallet.address);
     return {
       address: wallet.address,
       isCustom: wallet.isCustom,
-      nativeBalance: tokenBalances.nativeBalance,
-      tokens: tokenBalances.tokens
+      tokens: allTokensInfo
     };
   } catch (error) {
     console.error('Error getting user wallet info with tokens:', error);

@@ -5,23 +5,18 @@ import { formatTokenBalance } from '../utils/blockchainUtils';
 import dotenv from 'dotenv';
 
 dotenv.config({ debug: false, override: true });
-
 const botToken = process.env.TELEGRAM_BOT_TOKEN;
 
-// Initialize bot
 const bot = new TelegramBot(botToken as string, { polling: true });
 
-// Store user states for wallet operations
-const userStates: { [key: number]: { state: string; data?: any } } = {};
+const userStates: { [key: number]: { state: string; data?: any; tokens?: any[]; walletAddress?: string; isCustom?: boolean; lastTokenPage?: number } } = {};
 
-// Create inline keyboard for main menu
 function createMainMenuKeyboard() {
   return {
     reply_markup: {
       inline_keyboard: [
         [
-          { text: '💰 Wallet', callback_data: 'wallet' },
-          { text: '💎 Balance', callback_data: 'balance' }
+          { text: '💰 Wallet', callback_data: 'wallet' }
         ],
         [
           { text: '🆕 Create Wallet', callback_data: 'create_wallet' },
@@ -41,7 +36,6 @@ function createWalletMenuKeyboard() {
     reply_markup: {
       inline_keyboard: [
         [
-          { text: '💎 Check Balance', callback_data: 'balance' },
           { text: '🪙 All Tokens', callback_data: 'tokens' }
         ],
         [
@@ -55,44 +49,21 @@ function createWalletMenuKeyboard() {
   };
 }
 
-// Format wallet info with tokens for display
-function formatWalletInfoWithTokens(walletInfo: {
-  address: string;
-  isCustom: boolean;
-  nativeBalance: string;
-  tokens: Array<{
-    balance: string;
-    symbol: string;
-    name: string;
-    decimals: number;
-    address: string;
-  }>;
-}): string {
-  let formattedInfo = `
-💰 *Wallet Information*
-
-📍 *Address:* \`${walletInfo.address}\`
-🔐 *Type:* ${walletInfo.isCustom ? 'Custom Wallet' : 'Auto-generated'}
-
-💎 *Native Balance:*
-• BNB: ${parseFloat(walletInfo.nativeBalance).toFixed(6)} BNB
-`;
-
-  if (walletInfo.tokens.length > 0) {
-    formattedInfo += `
-🪙 *Token Balances:*\n`;
-    
-    walletInfo.tokens.forEach(token => {
-      const formattedBalance = formatTokenBalance(token.balance, token.decimals);
-      formattedInfo += `• ${token.symbol} (${token.name}): ${formattedBalance} ${token.symbol}\n`;
-    });
-  } else {
-    formattedInfo += `
-🪙 *Token Balances:* No tokens found
-`;
+// Helper to create pagination keyboard for tokens
+function createTokensPaginationKeyboard(currentPage: number, totalPages: number) {
+  const buttons = [];
+  if (currentPage > 1) {
+    buttons.push({ text: '⬅️ Prev', callback_data: `tokens_page_${currentPage - 1}` });
   }
-
-  return formattedInfo;
+  if (currentPage < totalPages) {
+    buttons.push({ text: 'Next ➡️', callback_data: `tokens_page_${currentPage + 1}` });
+  }
+  buttons.push({ text: '🔙 Back', callback_data: 'wallet' });
+  return {
+    reply_markup: {
+      inline_keyboard: [buttons]
+    }
+  };
 }
 
 // Handle /start command
@@ -115,10 +86,15 @@ async function handleStart(msg: TelegramBot.Message) {
       
       let walletStatus = '';
       if (hasExistingWallet) {
-        // Only get wallet info if user has a wallet
-        const walletInfo = await getUserWalletInfoWithTokens(user.id);
+        // Only get basic wallet info without token balances
+        const walletInfo = await getUserWalletInfo(user.id);
         if (walletInfo) {
-          walletStatus = formatWalletInfoWithTokens(walletInfo);
+          walletStatus = `
+💰 *Wallet Status:* Active
+📍 *Address:* \`${walletInfo.address}\`
+🔐 *Type:* ${walletInfo.isCustom ? 'Custom Wallet' : 'Auto-generated'}
+💎 *BNB Balance:* ${parseFloat(walletInfo.balance).toFixed(6)} BNB
+`;
         } else {
           walletStatus = `
 💰 *Wallet Status:* Error retrieving wallet information
@@ -205,7 +181,6 @@ async function handleHelp(msg: TelegramBot.Message) {
 /wallet - Show wallet information and options
 /create_wallet - Create a new BNB wallet automatically
 /import_wallet - Import existing wallet using private key
-/balance - Check your wallet balance
 
 🔧 *Features in Development:*
 • Real-time crypto prices
@@ -238,15 +213,17 @@ async function handleCallbackQuery(query: TelegramBot.CallbackQuery) {
   }
 
   try {
+    if (data.startsWith('tokens_page_')) {
+      const page = parseInt(data.replace('tokens_page_', ''));
+      await handleTokensCallback(chatId, user, messageId, page);
+      return;
+    }
     switch (data) {
       case 'wallet':
         await handleWalletCallback(chatId, user, messageId);
         break;
-      case 'balance':
-        await handleBalanceCallback(chatId, user, messageId);
-        break;
       case 'tokens':
-        await handleTokensCallback(chatId, user, messageId);
+        await handleTokensCallback(chatId, user, messageId, 1);
         break;
       case 'create_wallet':
         await handleCreateWalletCallback(chatId, user, messageId);
@@ -271,8 +248,14 @@ async function handleCallbackQuery(query: TelegramBot.CallbackQuery) {
 
 // Handle wallet callback
 async function handleWalletCallback(chatId: number, user: TelegramBot.User, messageId: number) {
+  if (userStates[user.id]) {
+    delete userStates[user.id].tokens;
+    delete userStates[user.id].walletAddress;
+    delete userStates[user.id].isCustom;
+    delete userStates[user.id].lastTokenPage;
+  }
   try {
-    const walletInfo = await getUserWalletInfoWithTokens(user.id);
+    const walletInfo = await getUserWalletInfo(user.id);
     
     if (walletInfo) {
       let walletMessage = `
@@ -282,24 +265,10 @@ async function handleWalletCallback(chatId: number, user: TelegramBot.User, mess
 🔐 *Type:* ${walletInfo.isCustom ? 'Custom Wallet' : 'Auto-generated'}
 
 💎 *Native Balance:*
-• BNB: ${parseFloat(walletInfo.nativeBalance).toFixed(6)} BNB
-`;
+• BNB: ${parseFloat(walletInfo.balance).toFixed(6)} BNB
 
-      if (walletInfo.tokens.length > 0) {
-        walletMessage += `
-🪙 *Token Balances:*\n`;
-        
-        walletInfo.tokens.forEach(token => {
-          const formattedBalance = formatTokenBalance(token.balance, token.decimals);
-          walletMessage += `• ${token.symbol} (${token.name}): ${formattedBalance} ${token.symbol}\n`;
-        });
-      } else {
-        walletMessage += `
-🪙 *Token Balances:* No tokens found
-`;
-      }
+🪙 *Token Balances:* Click "All Tokens" to view your token balances
 
-      walletMessage += `
 *Wallet Actions:*
 `;
       
@@ -333,82 +302,7 @@ You don't have a wallet yet. Create one to start trading!
   }
 }
 
-// Handle balance callback
-async function handleBalanceCallback(chatId: number, user: TelegramBot.User, messageId: number) {
-  try {
-    // Send a loading message first
-    await bot.editMessageText('🔄 *Loading wallet balance...*\n\nPlease wait while we fetch your balance information...', {
-      chat_id: chatId,
-      message_id: messageId,
-      parse_mode: 'Markdown'
-    });
 
-    const walletInfo = await getUserWalletInfoWithTokens(user.id);
-    
-    if (walletInfo) {
-      let balanceMessage = `
-💰 *Wallet Balance*
-
-📍 *Address:* \`${walletInfo.address}\`
-🔐 *Type:* ${walletInfo.isCustom ? 'Custom Wallet' : 'Auto-generated'}
-
-💎 *Native Balance:*
-• BNB: ${parseFloat(walletInfo.nativeBalance).toFixed(6)} BNB
-`;
-
-      if (walletInfo.tokens.length > 0) {
-        balanceMessage += `
-🪙 *Token Balances:*\n`;
-        
-        walletInfo.tokens.forEach(token => {
-          const formattedBalance = formatTokenBalance(token.balance, token.decimals);
-          balanceMessage += `• ${token.symbol} (${token.name}): ${formattedBalance} ${token.symbol}\n`;
-        });
-      } else {
-        balanceMessage += `
-🪙 *Token Balances:* No tokens found
-`;
-      }
-      
-      const keyboard = createWalletMenuKeyboard();
-      await bot.editMessageText(balanceMessage, { 
-        chat_id: chatId,
-        message_id: messageId,
-        parse_mode: 'Markdown',
-        reply_markup: keyboard.reply_markup
-      });
-    } else {
-      const keyboard = createMainMenuKeyboard();
-      await bot.editMessageText('❌ You don\'t have a wallet yet. Use the "Create Wallet" button to create one.', {
-        chat_id: chatId,
-        message_id: messageId,
-        reply_markup: keyboard.reply_markup
-      });
-    }
-  } catch (error) {
-    console.error('Error checking balance:', error);
-    
-    // Provide a more helpful error message
-    const errorMessage = `
-❌ *Error Loading Wallet Balance*
-
-The following issues may have occurred:
-• Network connectivity problems
-• Rate limiting from the blockchain provider
-• Temporary service unavailability
-
-*Please try again in a few moments.*
-`;
-
-    const keyboard = createWalletMenuKeyboard();
-    await bot.editMessageText(errorMessage, { 
-      chat_id: chatId,
-      message_id: messageId,
-      parse_mode: 'Markdown',
-      reply_markup: keyboard.reply_markup
-    });
-  }
-}
 
 // Handle create wallet callback
 async function handleCreateWalletCallback(chatId: number, user: TelegramBot.User, messageId: number) {
@@ -507,7 +401,6 @@ async function handleHelpCallback(chatId: number, messageId: number) {
 /wallet - Show wallet information and options
 /create_wallet - Create a new BNB wallet automatically
 /import_wallet - Import existing wallet using private key
-/balance - Check your wallet balance
 
 🔧 *Features in Development:*
 • Real-time crypto prices
@@ -538,7 +431,6 @@ Welcome to your crypto trading dashboard!
 
 *Available Actions:*
 • 💰 Manage your wallet
-• 💎 Check your balance
 • 🆕 Create a new wallet
 • 📥 Import existing wallet
 • ❓ Get help
@@ -560,80 +452,78 @@ Welcome to your crypto trading dashboard!
   });
 }
 
-// Handle tokens callback
-async function handleTokensCallback(chatId: number, user: TelegramBot.User, messageId: number) {
+// Refactored handleTokensCallback to support pagination
+async function handleTokensCallback(chatId: number, user: TelegramBot.User, messageId: number, page = 1) {
   try {
-    // Send a loading message first
-    await bot.editMessageText('🔄 *Loading token balances...*\n\nPlease wait while we fetch your token information...', {
+    // Check cache
+    if (!userStates[user.id]) userStates[user.id] = { state: '' };
+    let tokens = userStates[user.id].tokens;
+    if (!tokens) {
+      await bot.editMessageText('🔄 *Loading token info...*\n\nPlease wait while we fetch your token information...', {
+        chat_id: chatId,
+        message_id: messageId,
+        parse_mode: 'Markdown'
+      });
+      const walletInfo = await getUserWalletInfoWithTokens(user.id);
+      if (!walletInfo || !walletInfo.tokens || walletInfo.tokens.length === 0) {
+        let tokensMessage = `\n🪙 *All Token Balances*\n\n`;
+        tokensMessage += `📍 *Wallet Address:* \`${walletInfo ? walletInfo.address : ''}\`\n`;
+        tokensMessage += `🔐 *Wallet Type:* ${walletInfo ? (walletInfo.isCustom ? 'Custom Wallet' : 'Auto-generated') : ''}\n`;
+        tokensMessage += `\n*Token Balances:* No tokens found in this wallet\n\n*Note:* Only common BSC tokens are checked. Your wallet may have other tokens not shown here.`;
+        const keyboard = createWalletMenuKeyboard();
+        await bot.editMessageText(tokensMessage, {
+          chat_id: chatId,
+          message_id: messageId,
+          parse_mode: 'Markdown',
+          reply_markup: keyboard.reply_markup
+        });
+        return;
+      }
+      tokens = walletInfo.tokens;
+      userStates[user.id].tokens = tokens;
+      userStates[user.id].walletAddress = walletInfo.address;
+      userStates[user.id].isCustom = walletInfo.isCustom;
+    }
+    const totalPages = tokens.length;
+    let currentPage = page;
+    if (currentPage < 1) currentPage = 1;
+    if (currentPage > totalPages) currentPage = totalPages;
+    userStates[user.id].lastTokenPage = currentPage;
+    const token = tokens[currentPage - 1];
+    let tokensMessage = `\n🪙 *All Token Balances*\n\n`;
+    tokensMessage += `📍 *Wallet Address:* \`${userStates[user.id].walletAddress}\`\n`;
+    tokensMessage += `🔐 *Wallet Type:* ${userStates[user.id].isCustom ? 'Custom Wallet' : 'Auto-generated'}\n`;
+    tokensMessage += `\n*Token ${currentPage} of ${totalPages}*\n`;
+    tokensMessage += `*Name:* ${token.name}\n`;
+    tokensMessage += `*Symbol:* ${token.symbol}\n`;
+    tokensMessage += `*Balance:* ${token.balance} ${token.symbol}\n`;
+    tokensMessage += `*Decimals:* ${token.decimals}\n`;
+    tokensMessage += `*Address:* \`${token.token_address}\`\n`;
+    // Pagination keyboard
+    const buttons = [];
+    if (currentPage > 1) {
+      buttons.push({ text: '⬅️ Prev', callback_data: `tokens_page_${currentPage - 1}` });
+    }
+    if (currentPage < totalPages) {
+      buttons.push({ text: 'Next ➡️', callback_data: `tokens_page_${currentPage + 1}` });
+    }
+    buttons.push({ text: '🔙 Back', callback_data: 'wallet' });
+    const keyboard = {
+      reply_markup: {
+        inline_keyboard: [buttons]
+      }
+    };
+    await bot.editMessageText(tokensMessage, {
       chat_id: chatId,
       message_id: messageId,
-      parse_mode: 'Markdown'
+      parse_mode: 'Markdown',
+      reply_markup: keyboard.reply_markup
     });
-
-    const walletInfo = await getUserWalletInfoWithTokens(user.id);
-    
-    if (walletInfo) {
-      let tokensMessage = `
-🪙 *All Token Balances*
-
-📍 *Wallet Address:* \`${walletInfo.address}\`
-🔐 *Wallet Type:* ${walletInfo.isCustom ? 'Custom Wallet' : 'Auto-generated'}
-
-💎 *Native Balance:*
-• BNB: ${parseFloat(walletInfo.nativeBalance).toFixed(6)} BNB
-
-`;
-
-      if (walletInfo.tokens.length > 0) {
-        tokensMessage += `🪙 *Token Balances:*\n\n`;
-        
-        walletInfo.tokens.forEach((token, index) => {
-          const formattedBalance = formatTokenBalance(token.balance, token.decimals);
-          tokensMessage += `${index + 1}. **${token.symbol}** (${token.name})\n`;
-          tokensMessage += `   💰 Balance: ${formattedBalance} ${token.symbol}\n`;
-          tokensMessage += `   📍 Contract: \`${token.address}\`\n\n`;
-        });
-        
-        tokensMessage += `*Total Tokens:* ${walletInfo.tokens.length} tokens found`;
-      } else {
-        tokensMessage += `🪙 *Token Balances:* No tokens found in this wallet\n\n*Note:* Only common BSC tokens are checked. Your wallet may have other tokens not shown here.`;
-      }
-      
-      const keyboard = createWalletMenuKeyboard();
-      await bot.editMessageText(tokensMessage, { 
-        chat_id: chatId,
-        message_id: messageId,
-        parse_mode: 'Markdown',
-        reply_markup: keyboard.reply_markup
-      });
-    } else {
-      const keyboard = createMainMenuKeyboard();
-      await bot.editMessageText('❌ You don\'t have a wallet yet. Use the "Create Wallet" button to create one.', {
-        chat_id: chatId,
-        message_id: messageId,
-        reply_markup: keyboard.reply_markup
-      });
-    }
   } catch (error) {
     console.error('Error checking tokens:', error);
-    
-    // Provide a more helpful error message
-    const errorMessage = `
-❌ *Error Loading Token Balances*
-
-The following issues may have occurred:
-• Network connectivity problems
-• Rate limiting from the blockchain provider
-• Temporary service unavailability
-
-*Please try again in a few moments.*
-
-*Supported Tokens:*
-• WBNB, BUSD, USDT, USDC, CAKE, ETH, BTCB
-`;
-
+    const errorMessage = `\n❌ *Error Loading Token Info*\n\nThe following issues may have occurred:\n• Network connectivity problems\n• Rate limiting from the blockchain provider\n• Temporary service unavailability\n\n*Please try again in a few moments.*`;
     const keyboard = createWalletMenuKeyboard();
-    await bot.editMessageText(errorMessage, { 
+    await bot.editMessageText(errorMessage, {
       chat_id: chatId,
       message_id: messageId,
       parse_mode: 'Markdown',
@@ -653,7 +543,7 @@ async function handleWallet(msg: TelegramBot.Message) {
   }
 
   try {
-    const walletInfo = await getUserWalletInfoWithTokens(user.id);
+    const walletInfo = await getUserWalletInfo(user.id);
     
     if (walletInfo) {
       let walletMessage = `
@@ -663,24 +553,10 @@ async function handleWallet(msg: TelegramBot.Message) {
 🔐 *Type:* ${walletInfo.isCustom ? 'Custom Wallet' : 'Auto-generated'}
 
 💎 *Native Balance:*
-• BNB: ${parseFloat(walletInfo.nativeBalance).toFixed(6)} BNB
-`;
+• BNB: ${parseFloat(walletInfo.balance).toFixed(6)} BNB
 
-      if (walletInfo.tokens.length > 0) {
-        walletMessage += `
-🪙 *Token Balances:*\n`;
-        
-        walletInfo.tokens.forEach(token => {
-          const formattedBalance = formatTokenBalance(token.balance, token.decimals);
-          walletMessage += `• ${token.symbol} (${token.name}): ${formattedBalance} ${token.symbol}\n`;
-        });
-      } else {
-        walletMessage += `
-🪙 *Token Balances:* No tokens found
-`;
-      }
+🪙 *Token Balances:* Click "All Tokens" to view your token balances
 
-      walletMessage += `
 *Wallet Actions:*
 `;
       
@@ -804,60 +680,7 @@ Please send your wallet's private key.
   }
 }
 
-// Handle /balance command
-async function handleBalance(msg: TelegramBot.Message) {
-  const chatId = msg.chat.id;
-  const user = msg.from;
 
-  if (!user) {
-    await bot.sendMessage(chatId, '❌ Error: User information not available');
-    return;
-  }
-
-  try {
-    const walletInfo = await getUserWalletInfoWithTokens(user.id);
-    
-    if (walletInfo) {
-      let balanceMessage = `
-💰 *Wallet Balance*
-
-📍 *Address:* \`${walletInfo.address}\`
-🔐 *Type:* ${walletInfo.isCustom ? 'Custom Wallet' : 'Auto-generated'}
-
-💎 *Native Balance:*
-• BNB: ${parseFloat(walletInfo.nativeBalance).toFixed(6)} BNB
-`;
-
-      if (walletInfo.tokens.length > 0) {
-        balanceMessage += `
-🪙 *Token Balances:*\n`;
-        
-        walletInfo.tokens.forEach(token => {
-          const formattedBalance = formatTokenBalance(token.balance, token.decimals);
-          balanceMessage += `• ${token.symbol} (${token.name}): ${formattedBalance} ${token.symbol}\n`;
-        });
-      } else {
-        balanceMessage += `
-🪙 *Token Balances:* No tokens found
-`;
-      }
-      
-      const keyboard = createWalletMenuKeyboard();
-      await bot.sendMessage(chatId, balanceMessage, { 
-        parse_mode: 'Markdown',
-        reply_markup: keyboard.reply_markup
-      });
-    } else {
-      const keyboard = createMainMenuKeyboard();
-      await bot.sendMessage(chatId, '❌ You don\'t have a wallet yet. Use the "Create Wallet" button to create one.', {
-        reply_markup: keyboard.reply_markup
-      });
-    }
-  } catch (error) {
-    console.error('Error checking balance:', error);
-    await bot.sendMessage(chatId, '❌ Error checking balance. Please try again.');
-  }
-}
 
 // Handle private key input for wallet import
 async function handlePrivateKeyInput(msg: TelegramBot.Message) {
@@ -935,7 +758,6 @@ Please use one of these commands or the buttons below:
 /wallet - Manage your wallet
 /create_wallet - Create a new wallet
 /import_wallet - Import existing wallet
-/balance - Check wallet balance
 `;
 
   const keyboard = createMainMenuKeyboard();
@@ -961,9 +783,6 @@ function setupBotHandlers() {
   
   // Handle /import_wallet command
   bot.onText(/\/import_wallet/, handleImportWallet);
-  
-  // Handle /balance command
-  bot.onText(/\/balance/, handleBalance);
   
   // Handle callback queries (button clicks)
   bot.on('callback_query', handleCallbackQuery);

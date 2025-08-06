@@ -1,11 +1,11 @@
 import User, { IUser } from '../models/User';
-import { 
-  getUserWallet, 
-  createWalletForUser, 
-  updateUserWallet, 
-  getUserWalletInfo as getWalletInfo, 
+import {
+  getUserWallet,
+  createWalletForUser,
+  updateUserWallet,
+  getUserWalletInfo as getWalletInfo,
   getUserWalletInfoWithTokens as getWalletInfoWithTokens,
-  hasWallet as userHasWallet 
+  hasWallet as userHasWallet
 } from './walletService';
 
 // Check if user is already registered
@@ -69,19 +69,19 @@ export async function getOrCreateUser(userData: {
   try {
     // First check if user already exists
     const existingUser = await findByTelegramId(userData.telegramId);
-    
+
     if (existingUser) {
       // User already exists, return existing user without updating
       console.log(`User ${userData.telegramId} already registered, skipping creation`);
       return existingUser;
     }
-    
+
     // User doesn't exist, create new user
     const newUser = await createUser(userData);
     if (!newUser) {
       throw new Error('Failed to create new user');
     }
-    
+
     console.log(`New user ${userData.telegramId} registered successfully`);
     return newUser;
   } catch (error) {
@@ -99,7 +99,7 @@ export async function getOrCreateUserWithUpdate(userData: {
 }): Promise<IUser> {
   try {
     let user = await findByTelegramId(userData.telegramId);
-    
+
     if (!user) {
       // User doesn't exist, create new user
       user = await createUser(userData);
@@ -113,7 +113,7 @@ export async function getOrCreateUserWithUpdate(userData: {
       });
       console.log(`User ${userData.telegramId} information updated`);
     }
-    
+
     return user!;
   } catch (error) {
     console.error('Error in getOrCreateUserWithUpdate:', error);
@@ -139,13 +139,12 @@ export async function getUserWalletInfo(telegramId: number): Promise<{
 export async function getUserWalletInfoWithTokens(telegramId: number): Promise<{
   address: string;
   isCustom: boolean;
-  nativeBalance: string;
   tokens: Array<{
     balance: string;
     symbol: string;
     name: string;
     decimals: number;
-    address: string;
+    token_address: string;
   }>;
 } | null> {
   return await getWalletInfoWithTokens(telegramId);
