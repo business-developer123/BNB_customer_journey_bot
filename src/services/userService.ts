@@ -143,7 +143,6 @@ export async function getUserWalletInfoWithTokens(telegramId: number): Promise<{
     balance: string;
     symbol: string;
     name: string;
-    decimals: number;
     token_address: string;
   }>;
 } | null> {

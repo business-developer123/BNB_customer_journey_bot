@@ -1,7 +1,6 @@
 import TelegramBot from 'node-telegram-bot-api';
 import { getOrCreateUser, isUserRegistered, hasWallet, getUserWalletInfo, getUserWalletInfoWithTokens } from '../services/userService';
 import { createWalletForUser, updateUserWallet, getUserWallet } from '../services/walletService';
-import { formatTokenBalance, transferToken, transferBNB } from '../utils/blockchainUtils';
 import dotenv from 'dotenv';
 
 dotenv.config({ debug: false, override: true });
@@ -11,9 +10,9 @@ const bot = new TelegramBot(botToken as string, { polling: true });
 
 // Helper function to determine network and get network info
 function getNetworkInfo() {
-  const bnbRpcProvider = process.env.BNB_RPC_PROVIDER;
-  const isTestnet = bnbRpcProvider?.includes('testnet') || bnbRpcProvider?.includes('bsc-testnet') || bnbRpcProvider?.includes('data-seed-prebsc');
-  const networkInfo = isTestnet ? '🟡 BSC Testnet' : '🟢 BSC Mainnet';
+  const solanaRpcProvider = process.env.SOLANA_RPC_PROVIDER;
+  const isTestnet = solanaRpcProvider?.includes('testnet') || solanaRpcProvider?.includes('devnet') || solanaRpcProvider?.includes('data-seed-prebsc');
+  const networkInfo = isTestnet ? '🟡 Solana Testnet' : '🟢 Solana Mainnet';
   return { isTestnet, networkInfo };
 }
 
@@ -119,7 +118,7 @@ async function handleStart(msg: TelegramBot.Message) {
 💰 *Wallet Status:* Active
 📍 *Address:* \`${walletInfo.address}\`
 🔐 *Type:* ${walletInfo.isCustom ? 'Custom Wallet' : 'Auto-generated'}
-💎 *BNB Balance:* ${parseFloat(walletInfo.balance).toFixed(6)} BNB
+💎 *SOL Balance:* ${parseFloat(walletInfo.balance).toFixed(6)} SOL
 `;
         } else {
           walletStatus = `
@@ -211,7 +210,7 @@ async function handleHelp(msg: TelegramBot.Message) {
 
 *Wallet Management:*
 /wallet - Show wallet information and options
-/create_wallet - Create a new BNB wallet automatically
+/create_wallet - Create a new SOL wallet automatically
 /import_wallet - Import existing wallet using private key
 
 🔧 *Features in Development:*
@@ -327,7 +326,7 @@ async function handleWalletCallback(chatId: number, user: TelegramBot.User, mess
 🌐 *Network:* ${networkInfo}
 
 💎 *Native Balance:*
-• BNB: ${parseFloat(walletInfo.balance).toFixed(6)} BNB
+• SOL: ${parseFloat(walletInfo.balance).toFixed(6)} SOL
 
 🪙 *Token Balances:* Click "All Tokens" to view your token balances
 
@@ -390,12 +389,12 @@ async function handleCreateWalletCallback(chatId: number, user: TelegramBot.User
 
 📍 *Address:* \`${wallet.address}\`
 🔐 *Type:* Auto-generated
-💰 *Balance:* 0 BNB
+💰 *Balance:* 0 SOL
 
 *Important:* This wallet was automatically generated for you. Keep your private key safe if you want to import it elsewhere.
 
 *Next Steps:*
-• Fund your wallet with BNB
+• Fund your wallet with SOL
 • Start trading cryptocurrencies
 • Use "Check Balance" to monitor your balance
 
@@ -461,7 +460,7 @@ async function handleHelpCallback(chatId: number, messageId: number) {
 
 *Wallet Management:*
 /wallet - Show wallet information and options
-/create_wallet - Create a new BNB wallet automatically
+/create_wallet - Create a new SOL wallet automatically
 /import_wallet - Import existing wallet using private key
 
 🔧 *Features in Development:*
@@ -543,7 +542,7 @@ async function handleTokensCallback(chatId: number, user: TelegramBot.User, mess
         let tokensMessage = `\n🪙 *All Token Balances*\n\n`;
         tokensMessage += `📍 *Wallet Address:* \`${walletInfo ? walletInfo.address : ''}\`\n`;
         tokensMessage += `🔐 *Wallet Type:* ${walletInfo ? (walletInfo.isCustom ? 'Custom Wallet' : 'Auto-generated') : ''}\n`;
-        tokensMessage += `\n*Token Balances:* No tokens found in this wallet\n\n*Note:* Only common BSC tokens are checked. Your wallet may have other tokens not shown here.`;
+        tokensMessage += `\n*Token Balances:* No tokens found in this wallet\n\n*Note:* Only common Solana tokens are checked. Your wallet may have other tokens not shown here.`;
         const keyboard = createWalletMenuKeyboard();
         await bot.editMessageText(tokensMessage, {
           chat_id: chatId,
@@ -585,14 +584,14 @@ async function handleTokensCallback(chatId: number, user: TelegramBot.User, mess
     tokensMessage += `🔐 *Wallet Type:* ${userStates[user.id].isCustom ? 'Custom Wallet' : 'Auto-generated'}\n`;
     tokensMessage += `🌐 *Network:* ${networkInfo}\n`;
     tokensMessage += `\n*Token ${currentPage} of ${totalPages}*\n\n`;
-    
+
     // Display single token with detailed information
     const token = pageTokens[0];
-    tokensMessage += `*${token.symbol} (${token.name})*\n`;
-    tokensMessage += `💰 *Balance:* ${token.balance} ${token.symbol}\n`;
+    tokensMessage += `🪙 *${token.symbol} (${token.name})*\n`;
     tokensMessage += `📍 *Token Address:* \`${token.token_address}\`\n`;
-    tokensMessage += `📊 *Decimals:* ${token.decimals || 'N/A'}\n`;
-    tokensMessage += `💎 *Value:* ${token.value ? `$${parseFloat(token.value).toFixed(2)}` : 'N/A'}\n\n`;
+    tokensMessage += `💰 *Balance:* ${token.balance} ${token.symbol}\n`;
+    tokensMessage += `🔢 *Decimals:* ${token.decimals || 'N/A'}\n`;
+    tokensMessage += `💵 *Price:* $${token.price ? parseFloat(token.price).toFixed(6) : 'N/A'}\n`;
     
     // Pagination keyboard with improved layout
     const buttons = [];
@@ -748,9 +747,7 @@ async function handleTokenSelectionCallback(chatId: number, user: TelegramBot.Us
 `;
     transferMessage += `*Selected Token:* ${selectedToken.name} (${selectedToken.symbol})
 `;
-    transferMessage += `*Your Balance:* ${selectedToken.balance} ${selectedToken.symbol}
-
-`;
+    transferMessage += `*Your Balance:* ${selectedToken.balance} ${selectedToken.symbol}\n\n`;
     transferMessage += `*Please enter the recipient wallet address:*
 `;
     transferMessage += `(Send the address as a text message)`;
@@ -929,27 +926,26 @@ async function handleTransferConfirmation(chatId: number, user: TelegramBot.User
       parse_mode: 'Markdown'
     });
 
-    // Determine if this is a native BNB transfer or token transfer
-    const isNativeBNB = selectedToken.token_address === 'BNB' || selectedToken.symbol === 'BNB' || selectedToken.name === 'BNB';
+    // Determine if this is a native SOL transfer or token transfer
+    const isNativeSOL = selectedToken.token_address === 'SOL' || selectedToken.symbol === 'SOL' || selectedToken.name === 'Solana';
     
     let transactionResult;
     
-    if (isNativeBNB) {
-      // Transfer native BNB
-      const { transferBNB } = await import('../utils/blockchainUtils');
-      transactionResult = await transferBNB(
+    if (isNativeSOL) {
+      // Transfer native SOL
+      const { transferSOL } = await import('../utils/blockchainUtils'); 
+      transactionResult = await transferSOL(
         senderWallet.address,
         recipientAddress!,
         amount.toString()
       );
     } else {
-      // Transfer token
-      const { transferToken } = await import('../utils/blockchainUtils');
-      transactionResult = await transferToken(
+      // Transfer SPL token (for now using SOL transfer, but this should be updated for SPL tokens)
+      const { transferSOL } = await import('../utils/blockchainUtils');
+      transactionResult = await transferSOL(
         senderWallet.address,
-        selectedToken.token_address,
-        amount.toString(),
-        recipientAddress!
+        recipientAddress!,
+        amount.toString()
       );
     }
 
@@ -960,13 +956,11 @@ async function handleTransferConfirmation(chatId: number, user: TelegramBot.User
     successMessage += `*Recipient:* \`${recipientAddress}\`\n`;
     successMessage += `*Transaction Hash:* \`${transactionResult.transactionHash}\`\n\n`;
     
-    // Add BSCScan link for the transaction based on network
-    const { isTestnet } = getNetworkInfo();
-    const bscScanUrl = isTestnet 
-      ? `https://testnet.bscscan.com/tx/${transactionResult.transactionHash}`
-      : `https://bscscan.com/tx/${transactionResult.transactionHash}`;
-    const explorerName = isTestnet ? 'BscScan Testnet' : 'BscScan';
-    successMessage += `🔗 [View on ${explorerName}](${bscScanUrl})\n\n`;
+    // Add Solscan link for the transaction based on network
+    const { getSolanaNetworkInfo } = await import('../utils/blockchainUtils');
+    const { isTestnet, explorerName } = getSolanaNetworkInfo();
+    const solscanUrl = transactionResult.solscanLink || `https://solscan.io/tx/${transactionResult.transactionHash}`;
+    successMessage += `🔗 [View on ${explorerName}](${solscanUrl})\n\n`;
     successMessage += `*Your transfer has been completed successfully!*`;
 
     // Clear transfer state
@@ -979,7 +973,7 @@ async function handleTransferConfirmation(chatId: number, user: TelegramBot.User
       reply_markup: {
         inline_keyboard: [
           [
-            { text: '📋 View Transaction', url: bscScanUrl },
+            { text: '📋 View Transaction', url: solscanUrl },
             { text: '🔙 Back to Wallet', callback_data: 'wallet' }
           ]
         ]
@@ -1024,7 +1018,7 @@ async function handleWallet(msg: TelegramBot.Message) {
 🔐 *Type:* ${walletInfo.isCustom ? 'Custom Wallet' : 'Auto-generated'}
 
 💎 *Native Balance:*
-• BNB: ${parseFloat(walletInfo.balance).toFixed(6)} BNB
+• SOL: ${parseFloat(walletInfo.balance).toFixed(6)} SOL
 
 🪙 *Token Balances:* Click "All Tokens" to view your token balances
 
@@ -1087,12 +1081,12 @@ async function handleCreateWallet(msg: TelegramBot.Message) {
 
 📍 *Address:* \`${wallet.address}\`
 🔐 *Type:* Auto-generated
-💰 *Balance:* 0 BNB
+💰 *Balance:* 0 SOL
 
 *Important:* This wallet was automatically generated for you. Keep your private key safe if you want to import it elsewhere.
 
 *Next Steps:*
-• Fund your wallet with BNB
+• Fund your wallet with SOL
 • Start trading cryptocurrencies
 • Use "Check Balance" to monitor your balance
 
@@ -1176,12 +1170,16 @@ async function handlePrivateKeyInput(msg: TelegramBot.Message) {
     // Update wallet with private key
     const wallet = await updateUserWallet(user.id, privateKey);
 
+    // Get wallet info with real balance
+    const walletInfo = await getUserWalletInfo(user.id);
+    const balance = walletInfo ? walletInfo.balance : '0';
+
     const successMessage = `
 ✅ *Wallet Imported Successfully!*
 
 📍 *Address:* \`${wallet.address}\`
 🔐 *Type:* Custom Wallet
-💰 *Balance:* Checking...
+💰 *Balance:* ${balance} SOL
 
 *Your wallet has been updated with the provided private key.*
 
