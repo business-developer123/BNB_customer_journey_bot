@@ -239,6 +239,3 @@ export function getSolanaNetworkInfo() {
   const explorerName = isTestnet ? 'Solana Explorer' : 'Solscan';
   return { isTestnet, networkInfo, explorerName };
 } 
-
-https://solscan.io/tx/4YRPcEjU2BuNWDcCauTPbvvi3LoYydW1CGzeWR26QDoG5ghx3FgEiEeuUsZGn7a21odCpD4B4yvVrCadn8nytzhb?cluster=devnet
-https://solscan.io/tx/4YRPcEjU2BuNWDcCauTPbvvi3LoYydW1CGzeWR26QDoG5ghx3FgEiEeuUsZGn7a21odCpD4B4yvVrCadn8nytzhb?cluster=devnet
