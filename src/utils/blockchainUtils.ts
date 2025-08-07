@@ -1,6 +1,5 @@
 import dotenv from 'dotenv';
 import Moralis from 'moralis';
-import * as solanaWeb3 from '@solana/web3.js';
 import { LAMPORTS_PER_SOL, Keypair, PublicKey } from '@solana/web3.js';
 import { Connection, clusterApiUrl } from '@solana/web3.js';
 import { sendAndConfirmTransaction, SystemProgram, Transaction } from '@solana/web3.js';
@@ -91,14 +90,19 @@ export async function getAllTokensInfoOfUserWallet(walletAddress: string): Promi
       throw new Error('Invalid wallet address format');
     }
 
-    const isTestnet = process.env.SOLANA_RPC_PROVIDER?.includes('testnet') || process.env.SOLANA_RPC_PROVIDER?.includes('data-seed-prebsc');
+    const isTestnet = process.env.SOLANA_RPC_PROVIDER?.includes('devnet') || process.env.SOLANA_RPC_PROVIDER?.includes('devnet') || process.env.SOLANA_RPC_PROVIDER?.includes('data-seed-prebsc');
+
+    console.log(`🔍 Network detection: RPC=${process.env.SOLANA_RPC_PROVIDER}, isTestnet=${isTestnet}`);
 
     await Moralis.start({
       apiKey: moralisApiKey
     });
 
+    const network = isTestnet ? "devnet" : "mainnet";
+    console.log(`🌐 Fetching native balance from ${network} for address: ${walletAddress}`);
+    
     const responseNative = await Moralis.SolApi.account.getBalance({
-      "network": isTestnet ? "testnet" : "mainnet",
+      "network": network,
       "address": walletAddress
     });
 
@@ -113,8 +117,10 @@ export async function getAllTokensInfoOfUserWallet(walletAddress: string): Promi
       decimals: 9,
     });
 
+    console.log(`🌐 Fetching SPL tokens from ${network} for address: ${walletAddress}`);
+    
     const responseSPL = await Moralis.SolApi.account.getSPL({
-      "network": isTestnet ? "testnet" : "mainnet",
+      "network": network,
       "address": walletAddress,
     });
 
@@ -131,7 +137,7 @@ export async function getAllTokensInfoOfUserWallet(walletAddress: string): Promi
       });
     });
 
-    console.log(`📊 Found ${tokens.length} tokens for wallet ${walletAddress} on ${isTestnet ? 'testnet' : 'mainnet'}`);
+    console.log(`📊 Found ${tokens.length} tokens for wallet ${walletAddress} on ${isTestnet ? 'devnet' : 'mainnet'}`);
     return tokens;
   } catch (error) {
     console.error('❌ Error getting all token balances:', error);
@@ -206,7 +212,7 @@ export function getSolscanLink(transactionHash: string): string {
       throw new Error('Invalid transaction hash provided');
     }
 
-    const isTestnet = process.env.SOLANA_RPC_PROVIDER?.includes('testnet') || process.env.SOLANA_RPC_PROVIDER?.includes('data-seed-prebsc');
+    const isTestnet = process.env.SOLANA_RPC_PROVIDER?.includes('devnet') || process.env.SOLANA_RPC_PROVIDER?.includes('devnet') || process.env.SOLANA_RPC_PROVIDER?.includes('data-seed-prebsc');
 
     const baseUrl = 'https://solscan.io';
 
@@ -216,7 +222,7 @@ export function getSolscanLink(transactionHash: string): string {
     }
 
     // For Solana Explorer testnet/devnet
-    return `${baseUrl}/tx/${transactionHash}?cluster=${isTestnet ? 'testnet' : 'mainnet'}`;
+    return `${baseUrl}/tx/${transactionHash}?cluster=${isTestnet ? 'devnet' : 'mainnet'}`;
   } catch (error) {
     console.error('Error generating Solscan link:', error);
     throw new Error('Failed to generate Solscan link');
@@ -226,10 +232,13 @@ export function getSolscanLink(transactionHash: string): string {
 // --- Get Network Info for Solana ---
 export function getSolanaNetworkInfo() {
   const solanaRpcProvider = process.env.SOLANA_RPC_PROVIDER;
-  const isTestnet = solanaRpcProvider?.includes('testnet') ||
+  const isTestnet = solanaRpcProvider?.includes('devnet') ||
     solanaRpcProvider?.includes('devnet') ||
     solanaRpcProvider?.includes('data-seed-prebsc');
-  const networkInfo = isTestnet ? '🟡 Solana Testnet' : '🟢 Solana Mainnet';
+  const networkInfo = isTestnet ? '🟡 Solana Devnet' : '🟢 Solana Mainnet';
   const explorerName = isTestnet ? 'Solana Explorer' : 'Solscan';
   return { isTestnet, networkInfo, explorerName };
 } 
+
+https://solscan.io/tx/4YRPcEjU2BuNWDcCauTPbvvi3LoYydW1CGzeWR26QDoG5ghx3FgEiEeuUsZGn7a21odCpD4B4yvVrCadn8nytzhb?cluster=devnet
+https://solscan.io/tx/4YRPcEjU2BuNWDcCauTPbvvi3LoYydW1CGzeWR26QDoG5ghx3FgEiEeuUsZGn7a21odCpD4B4yvVrCadn8nytzhb?cluster=devnet
