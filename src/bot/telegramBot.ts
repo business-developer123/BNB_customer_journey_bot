@@ -59,6 +59,9 @@ function createWalletMenuKeyboard() {
           { text: '🪙 All Tokens', callback_data: 'tokens' }
         ],
         [
+          { text: '🔄 Refresh Tokens', callback_data: 'refresh_tokens' }
+        ],
+        [
           { text: '💸 Transfer Token', callback_data: 'transfer_token' }
         ],
         [
@@ -269,6 +272,9 @@ async function handleCallbackQuery(query: TelegramBot.CallbackQuery) {
       case 'tokens':
         await handleTokensCallback(chatId, user, messageId, 1);
         break;
+      case 'refresh_tokens':
+        await handleRefreshTokensCallback(chatId, user, messageId);
+        break;
       case 'transfer_token':
         await handleTransferTokenCallback(chatId, user, messageId);
         break;
@@ -295,12 +301,13 @@ async function handleCallbackQuery(query: TelegramBot.CallbackQuery) {
 
 // Handle wallet callback
 async function handleWalletCallback(chatId: number, user: TelegramBot.User, messageId: number) {
-  // Clear transfer-related state when entering wallet menu
+  // Clear transfer-related state when entering wallet menu, but preserve token data for pagination
   if (userStates[user.id]) {
-    delete userStates[user.id].tokens;
-    delete userStates[user.id].walletAddress;
-    delete userStates[user.id].isCustom;
-    delete userStates[user.id].lastTokenPage;
+    // Keep tokens data for pagination functionality
+    // delete userStates[user.id].tokens; // Commented out to preserve token data
+    // delete userStates[user.id].walletAddress; // Commented out to preserve wallet info
+    // delete userStates[user.id].isCustom; // Commented out to preserve wallet info
+    // delete userStates[user.id].lastTokenPage; // Commented out to preserve pagination state
     delete userStates[user.id].transferTokens;
     delete userStates[user.id].selectedToken;
     delete userStates[user.id].recipientAddress;
@@ -517,10 +524,14 @@ Welcome to your crypto trading dashboard!
 // Handle tokens callback with pagination
 async function handleTokensCallback(chatId: number, user: TelegramBot.User, messageId: number, page = 1) {
   try {
+    console.log(`🔄 Handling tokens callback for user ${user.id}, page ${page}`);
+    
     // Check cache
     if (!userStates[user.id]) userStates[user.id] = { state: '' };
     let tokens = userStates[user.id].tokens;
+    
     if (!tokens) {
+      console.log(`📥 No cached tokens found for user ${user.id}, fetching from blockchain...`);
       await bot.editMessageText('🔄 *Loading token info...*\n\nPlease wait while we fetch your token information...', {
         chat_id: chatId,
         message_id: messageId,
@@ -528,6 +539,7 @@ async function handleTokensCallback(chatId: number, user: TelegramBot.User, mess
       });
       const walletInfo = await getUserWalletInfoWithTokens(user.id);
       if (!walletInfo || !walletInfo.tokens || walletInfo.tokens.length === 0) {
+        console.log(`❌ No tokens found for user ${user.id}`);
         let tokensMessage = `\n🪙 *All Token Balances*\n\n`;
         tokensMessage += `📍 *Wallet Address:* \`${walletInfo ? walletInfo.address : ''}\`\n`;
         tokensMessage += `🔐 *Wallet Type:* ${walletInfo ? (walletInfo.isCustom ? 'Custom Wallet' : 'Auto-generated') : ''}\n`;
@@ -545,10 +557,13 @@ async function handleTokensCallback(chatId: number, user: TelegramBot.User, mess
       userStates[user.id].tokens = tokens;
       userStates[user.id].walletAddress = walletInfo.address;
       userStates[user.id].isCustom = walletInfo.isCustom;
+      console.log(`✅ Cached ${tokens.length} tokens for user ${user.id}`);
+    } else {
+      console.log(`📋 Using cached tokens for user ${user.id}, found ${tokens.length} tokens`);
     }
 
-    // Pagination logic - show 5 tokens per page
-    const tokensPerPage = 5;
+    // Pagination logic - show 1 token per page
+    const tokensPerPage = 1;
     const totalPages = Math.ceil(tokens.length / tokensPerPage);
     let currentPage = page;
     if (currentPage < 1) currentPage = 1;
@@ -560,32 +575,45 @@ async function handleTokensCallback(chatId: number, user: TelegramBot.User, mess
     const endIndex = Math.min(startIndex + tokensPerPage, tokens.length);
     const pageTokens = tokens.slice(startIndex, endIndex);
     
+    console.log(`📄 Pagination: Page ${currentPage}/${totalPages}, showing token ${startIndex + 1} of ${tokens.length}`);
+    console.log(`🎯 Current token: ${pageTokens[0]?.symbol} (${pageTokens[0]?.name})`);
+    
     const { networkInfo } = getNetworkInfo();
     
-    let tokensMessage = `\n🪙 *All Token Balances*\n\n`;
+    let tokensMessage = `\n🪙 *Token Information*\n\n`;
     tokensMessage += `📍 *Wallet Address:* \`${userStates[user.id].walletAddress}\`\n`;
     tokensMessage += `🔐 *Wallet Type:* ${userStates[user.id].isCustom ? 'Custom Wallet' : 'Auto-generated'}\n`;
     tokensMessage += `🌐 *Network:* ${networkInfo}\n`;
-    tokensMessage += `\n*Page ${currentPage} of ${totalPages}*\n\n`;
+    tokensMessage += `\n*Token ${currentPage} of ${totalPages}*\n\n`;
     
-    pageTokens.forEach((token, index) => {
-      tokensMessage += `*${startIndex + index + 1}. ${token.symbol} (${token.name})*\n`;
-      tokensMessage += `💰 Balance: ${token.balance} ${token.symbol}\n`;
-      tokensMessage += `📍 Address: \`${token.token_address}\`\n\n`;
-    });
+    // Display single token with detailed information
+    const token = pageTokens[0];
+    tokensMessage += `*${token.symbol} (${token.name})*\n`;
+    tokensMessage += `💰 *Balance:* ${token.balance} ${token.symbol}\n`;
+    tokensMessage += `📍 *Token Address:* \`${token.token_address}\`\n`;
+    tokensMessage += `📊 *Decimals:* ${token.decimals || 'N/A'}\n`;
+    tokensMessage += `💎 *Value:* ${token.value ? `$${parseFloat(token.value).toFixed(2)}` : 'N/A'}\n\n`;
     
-    // Pagination keyboard
+    // Pagination keyboard with improved layout
     const buttons = [];
+    const navigationRow = [];
+    
     if (currentPage > 1) {
-      buttons.push({ text: '⬅️ Prev', callback_data: `tokens_page_${currentPage - 1}` });
+      navigationRow.push({ text: '⬅️ Prev', callback_data: `tokens_page_${currentPage - 1}` });
     }
     if (currentPage < totalPages) {
-      buttons.push({ text: 'Next ➡️', callback_data: `tokens_page_${currentPage + 1}` });
+      navigationRow.push({ text: 'Next ➡️', callback_data: `tokens_page_${currentPage + 1}` });
     }
-    buttons.push({ text: '🔙 Back', callback_data: 'wallet' });
+    
+    if (navigationRow.length > 0) {
+      buttons.push(navigationRow);
+    }
+    
+    buttons.push([{ text: '🔙 Back to Wallet', callback_data: 'wallet' }]);
+    
     const keyboard = {
       reply_markup: {
-        inline_keyboard: [buttons]
+        inline_keyboard: buttons
       }
     };
     await bot.editMessageText(tokensMessage, {
@@ -603,6 +631,31 @@ async function handleTokensCallback(chatId: number, user: TelegramBot.User, mess
       message_id: messageId,
       parse_mode: 'Markdown',
       reply_markup: keyboard.reply_markup
+    });
+  }
+}
+
+// Handle refresh tokens callback
+async function handleRefreshTokensCallback(chatId: number, user: TelegramBot.User, messageId: number) {
+  try {
+    console.log(`🔄 Refreshing tokens for user ${user.id}`);
+    
+    // Clear cached token data to force fresh fetch
+    if (userStates[user.id]) {
+      delete userStates[user.id].tokens;
+      delete userStates[user.id].walletAddress;
+      delete userStates[user.id].isCustom;
+      delete userStates[user.id].lastTokenPage;
+    }
+    
+    // Fetch fresh token data and show first page
+    await handleTokensCallback(chatId, user, messageId, 1);
+  } catch (error) {
+    console.error('Error refreshing tokens:', error);
+    await bot.editMessageText('❌ Error refreshing tokens. Please try again.', {
+      chat_id: chatId,
+      message_id: messageId,
+      reply_markup: createWalletMenuKeyboard().reply_markup
     });
   }
 }
