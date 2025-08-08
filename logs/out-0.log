@@ -1,0 +1,11 @@
+2025-08-08T14:53:47: [dotenv@17.2.1] injecting env (4) from .env -- tip: ⚙️  suppress all logs with { quiet: true }
+2025-08-08T14:53:51: [dotenv@17.2.1] injecting env (4) from .env -- tip: ⚙️  enable debug logging with { debug: true }
+2025-08-08T14:53:54: [dotenv@17.2.1] injecting env (0) from .env -- tip: ⚙️  enable debug logging with { debug: true }
+2025-08-08T14:53:54: [dotenv@17.2.1] injecting env (4) from .env -- tip: ⚙️  override existing env vars with { override: true }
+2025-08-08T14:53:54: [dotenv@17.2.1] injecting env (0) from .env -- tip: 🛠️  run anywhere with `dotenvx run -- yourcommand`
+2025-08-08T14:53:55: 🌳Connected to MongoDB
+2025-08-08T14:53:55: 🤖 Starting Telegram bot...
+2025-08-08T14:53:57: ✅ Returning user logged in: cruzorney (ID: 7868262962)
+2025-08-08T14:53:57: ✅ Returning user logged in: cruzorney (ID: 7868262962)
+2025-08-08T14:53:57: ✅ Returning user logged in: cruzorney (ID: 7868262962)
+2025-08-08T14:53:58: ✅ Returning user logged in: cruzorney (ID: 7868262962)
