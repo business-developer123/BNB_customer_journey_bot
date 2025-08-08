@@ -38,6 +38,9 @@ function createMainMenuKeyboard() {
           { text: '💰 Wallet', callback_data: 'wallet' }
         ],
         [
+          { text: '📈 Market & Trading', callback_data: 'market' }
+        ],
+        [
           { text: '🆕 Create Wallet', callback_data: 'create_wallet' },
           { text: '📥 Import Wallet', callback_data: 'import_wallet' }
         ],
@@ -197,6 +200,27 @@ ${walletStatus}
   }
 }
 
+function createMarketMenuKeyboard() {
+  return {
+    reply_markup: {
+      inline_keyboard: [
+        [
+          { text: '💵 SOL ↔ USDC', callback_data: 'market_pair_SOL-USDC' },
+        ],
+        [
+          { text: '💵 SOL ↔ USDT', callback_data: 'market_pair_SOL-USDT' },
+        ],
+        [
+          { text: '🧮 Custom Pair (coming soon)', callback_data: 'market_tbd' },
+        ],
+        [
+          { text: '🔙 Back to Main Menu', callback_data: 'main_menu' }
+        ]
+      ]
+    }
+  };
+}
+
 // Handle /help command
 async function handleHelp(msg: TelegramBot.Message) {
   const chatId = msg.chat.id;
@@ -249,6 +273,30 @@ async function handleCallbackQuery(query: TelegramBot.CallbackQuery) {
       await handleTokensCallback(chatId, user, messageId, page);
       return;
     }
+    if (data.startsWith('market_pair_')) {
+      const [_, pair] = data.split('_');
+      const [inp, outp] = pair.split('-');
+      await handleMarketQuote(chatId, user, messageId, inp, outp);
+      return;
+    }
+    if (data.startsWith('market_buy_')) {
+      const [_, pair] = data.split('_');
+      const [inp, outp] = pair.split('-');
+      await handleMarketStartTrade(chatId, user, messageId, inp, outp, 'buy');
+      return;
+    }
+    if (data.startsWith('market_sell_')) {
+      const [_, pair] = data.split('_');
+      const [inp, outp] = pair.split('-');
+      await handleMarketStartTrade(chatId, user, messageId, inp, outp, 'sell');
+      return;
+    }
+    if (data.startsWith('market_confirm_')) {
+      const amountStr = data.replace('market_confirm_', '');
+      const amount = parseFloat(amountStr);
+      await handleMarketConfirm(chatId, user, messageId, amount);
+      return;
+    }
     if (data.startsWith('select_token_')) {
       const tokenIndex = parseInt(data.replace('select_token_', ''));
       await handleTokenSelectionCallback(chatId, user, messageId, tokenIndex);
@@ -267,6 +315,9 @@ async function handleCallbackQuery(query: TelegramBot.CallbackQuery) {
     switch (data) {
       case 'wallet':
         await handleWalletCallback(chatId, user, messageId);
+        break;
+      case 'market':
+        await handleMarketMenu(chatId, user, messageId);
         break;
       case 'tokens':
         await handleTokensCallback(chatId, user, messageId, 1);
@@ -295,6 +346,145 @@ async function handleCallbackQuery(query: TelegramBot.CallbackQuery) {
   } catch (error) {
     console.error('Error handling callback query:', error);
     await bot.answerCallbackQuery(query.id, { text: 'Error occurred' });
+  }
+}
+
+async function handleMarketMenu(chatId: number, user: TelegramBot.User, messageId: number) {
+  const { networkInfo } = getNetworkInfo();
+  const text = `📈 Market & Trading\n\n` +
+    `• Real-time quotes via Jupiter\n` +
+    `• Network: ${networkInfo}\n\n` +
+    `Choose a popular pair or use custom soon.`;
+  const keyboard = createMarketMenuKeyboard();
+  await bot.editMessageText(text, {
+    chat_id: chatId,
+    message_id: messageId,
+    reply_markup: keyboard.reply_markup
+  });
+}
+
+async function handleMarketQuote(chatId: number, user: TelegramBot.User, messageId: number, inputSymbol: string, outputSymbol: string) {
+  try {
+    const { COMMON_MINTS, getNetworkFromEnv, fetchPrice } = await import('../utils/tradingUtils');
+    const net = getNetworkFromEnv();
+    type Sym = 'SOL' | 'USDC' | 'USDT';
+    const inMint = COMMON_MINTS[net][inputSymbol as Sym];
+    const outMint = COMMON_MINTS[net][outputSymbol as Sym];
+    if (!inMint || !outMint) {
+      await bot.answerCallbackQuery(undefined as any, { text: 'Unsupported pair' });
+      return;
+    }
+
+    // Default quote amount: 0.1 SOL or 10 USDC depending on input
+    const decimals = inputSymbol === 'SOL' ? 9 : 6;
+    const defaultHuman = inputSymbol === 'SOL' ? 0.1 : 10;
+    const amountAtomic = BigInt(Math.floor(defaultHuman * Math.pow(10, decimals))).toString();
+
+    await bot.editMessageText(`🔄 Fetching quote for ${inputSymbol} → ${outputSymbol}...`, {
+      chat_id: chatId,
+      message_id: messageId
+    });
+
+    const quote = await fetchPrice(inMint, outMint, amountAtomic, 100);
+    const outDecimals = outputSymbol === 'SOL' ? 9 : 6;
+    const outHuman = Number(quote.outAmount) / Math.pow(10, outDecimals);
+    const priceImpact = (parseFloat(quote.priceImpactPct) * 100).toFixed(3);
+
+    const txt = `📊 Quote (${inputSymbol} → ${outputSymbol})\n\n` +
+      `• Input: ${defaultHuman} ${inputSymbol}\n` +
+      `• Estimated Output: ${outHuman.toFixed(6)} ${outputSymbol}\n` +
+      `• Slippage: ${quote.slippageBps / 100}%\n` +
+      `• Price Impact: ${priceImpact}%`;
+
+    const keyboard = {
+      reply_markup: {
+        inline_keyboard: [
+          [ { text: '🔁 Refresh Quote', callback_data: `market_pair_${inputSymbol}-${outputSymbol}` } ],
+          [ { text: `🟢 Buy ${outputSymbol} with ${inputSymbol}`, callback_data: `market_buy_${inputSymbol}-${outputSymbol}` } ],
+          [ { text: `🔴 Sell ${outputSymbol} for ${inputSymbol}`, callback_data: `market_sell_${outputSymbol}-${inputSymbol}` } ],
+          [ { text: '🔙 Back', callback_data: 'market' } ]
+        ]
+      }
+    };
+
+    await bot.editMessageText(txt, {
+      chat_id: chatId,
+      message_id: messageId,
+      reply_markup: keyboard.reply_markup
+    });
+  } catch (err) {
+    console.error('Quote error:', err);
+    await bot.editMessageText('❌ Failed to fetch quote. Please try again later.', {
+      chat_id: chatId,
+      message_id: messageId,
+      reply_markup: createMarketMenuKeyboard().reply_markup
+    });
+  }
+}
+
+async function handleMarketStartTrade(chatId: number, user: TelegramBot.User, messageId: number, inputSymbol: string, outputSymbol: string, side: 'buy' | 'sell') {
+  try {
+    if (!userStates[user.id]) userStates[user.id] = { state: '' };
+    userStates[user.id].state = 'market_enter_amount';
+    userStates[user.id].data = { inputSymbol, outputSymbol, side };
+    const prompt = side === 'buy'
+      ? `Enter amount of ${inputSymbol} to spend:`
+      : `Enter amount of ${inputSymbol} to sell:`;
+    await bot.editMessageText(`🛒 ${side === 'buy' ? 'Buy' : 'Sell'} Flow\n\nPair: ${inputSymbol} → ${outputSymbol}\n${prompt}`, {
+      chat_id: chatId,
+      message_id: messageId,
+      reply_markup: { inline_keyboard: [[{ text: '🔙 Back', callback_data: 'market' }]] }
+    });
+  } catch (e) {
+    console.error('Start trade error', e);
+  }
+}
+
+async function handleMarketConfirm(chatId: number, user: TelegramBot.User, messageId: number, amount: number) {
+  try {
+    const st = userStates[user.id];
+    if (!st || !st.data) return;
+    const { inputSymbol, outputSymbol, side } = st.data;
+    const { COMMON_MINTS, getNetworkFromEnv, fetchPrice, createSwapTransaction, signAndSendSwapTransaction } = await import('../utils/tradingUtils');
+    const net = getNetworkFromEnv();
+    type Sym = 'SOL' | 'USDC' | 'USDT';
+    const inMint = COMMON_MINTS[net][(inputSymbol as Sym)];
+    const outMint = COMMON_MINTS[net][(outputSymbol as Sym)];
+    const decimals = inputSymbol === 'SOL' ? 9 : 6;
+    const amountAtomic = BigInt(Math.floor(amount * Math.pow(10, decimals))).toString();
+
+    // Build quote
+    await bot.editMessageText('🔄 Building route...', { chat_id: chatId, message_id: messageId });
+    const quote = await fetchPrice(inMint, outMint, amountAtomic, 100);
+
+    // Get user wallet and private key
+    const { getUserWallet, getUserWalletPrivateKey } = await import('../services/walletService');
+    const wallet = await getUserWallet(user.id);
+    if (!wallet) throw new Error('Wallet not found');
+    const pk = await getUserWalletPrivateKey(wallet.address);
+    if (!pk) throw new Error('Missing private key');
+
+    // Create swap transaction
+    const serialized = await createSwapTransaction(quote, wallet.address);
+    // Sign and send
+    const sig = await signAndSendSwapTransaction(serialized, pk);
+
+    // Success UI
+    const { getSolanaNetworkInfo, getSolscanLink } = await import('../utils/blockchainUtils');
+    const { explorerName } = getSolanaNetworkInfo();
+    const link = getSolscanLink(sig);
+    await bot.editMessageText(`✅ Trade submitted!\n\nTx: \`${sig}\`\n🔗 [View on ${explorerName}](${link})`, {
+      chat_id: chatId,
+      message_id: messageId,
+      parse_mode: 'Markdown',
+      reply_markup: { inline_keyboard: [[{ text: '🔙 Back to Market', callback_data: 'market' }]] },
+      disable_web_page_preview: true
+    });
+    userStates[user.id].state = '';
+    delete userStates[user.id].data;
+  } catch (e) {
+    console.error('Trade error', e);
+    await bot.editMessageText('❌ Trade failed. Please try again later.', { chat_id: chatId, message_id: messageId, reply_markup: createMarketMenuKeyboard().reply_markup });
   }
 }
 
@@ -499,6 +689,7 @@ Welcome to your crypto trading dashboard!
 
 *Available Actions:*
 • 💰 Manage your wallet
+• 📈 Market & Trading
 • 🆕 Create a new wallet
 • 📥 Import existing wallet
 • ❓ Get help
@@ -506,7 +697,7 @@ Welcome to your crypto trading dashboard!
 *Quick Stats:*
 • Status: Active
 • Network: ${networkInfo}
-• Trading: Coming Soon
+• Trading: Quotes Enabled
 
 🚀 *Select an option below:*
 `;
@@ -1272,6 +1463,23 @@ function setupBotHandlers() {
           return;
         } else if (userState.state === 'entering_amount') {
           handleAmountInput(msg);
+          return;
+        } else if (userState.state === 'market_enter_amount') {
+          const amount = parseFloat(msg.text!.trim());
+          if (isNaN(amount) || amount <= 0) {
+            bot.sendMessage(msg.chat.id, '❌ Invalid amount. Please enter a positive number.');
+            return;
+          }
+          // Use last edited message? Fall back to sending new confirmation
+          const confirmText = `Please confirm trade amount: ${amount}`;
+          bot.sendMessage(msg.chat.id, confirmText, {
+            reply_markup: {
+              inline_keyboard: [
+                [ { text: '✅ Confirm', callback_data: `market_confirm_${amount}` } ],
+                [ { text: '❌ Cancel', callback_data: 'market' } ]
+              ]
+            }
+          });
           return;
         }
       }
