@@ -274,21 +274,86 @@ async function handleCallbackQuery(query: TelegramBot.CallbackQuery) {
       return;
     }
     if (data.startsWith('market_pair_')) {
-      const [_, pair] = data.split('_');
+      const pair = data.slice('market_pair_'.length);
       const [inp, outp] = pair.split('-');
       await handleMarketQuote(chatId, user, messageId, inp, outp);
       return;
     }
-    if (data.startsWith('market_buy_')) {
-      const [_, pair] = data.split('_');
+    if (data.startsWith('market_slippage_')) {
+      const parts = data.split('_');
+      const bps = parseInt(parts[2], 10);
+      const pair = parts[3];
       const [inp, outp] = pair.split('-');
-      await handleMarketStartTrade(chatId, user, messageId, inp, outp, 'buy');
+      if (!userStates[user.id]) userStates[user.id] = { state: '' };
+      if (!userStates[user.id].data) userStates[user.id].data = {};
+      userStates[user.id].data.slippageBps = bps;
+      await handleMarketQuote(chatId, user, messageId, inp, outp);
+      return;
+    }
+    if (data.startsWith('market_amount_')) {
+      const pair = data.slice('market_amount_'.length);
+      if (!userStates[user.id]) userStates[user.id] = { state: '' };
+      if (!userStates[user.id].data) userStates[user.id].data = {};
+      userStates[user.id].data.pairForAmount = pair;
+      userStates[user.id].state = 'market_enter_quote_amount';
+      await bot.editMessageText(`✏️ Enter input amount for ${pair} (number):`, { chat_id: chatId, message_id: messageId, reply_markup: { inline_keyboard: [[{ text: '🔙 Back', callback_data: `market_pair_${pair}` }]] } });
+      return;
+    }
+    if (data.startsWith('market_slip_custom_')) {
+      const pair = data.slice('market_slip_custom_'.length);
+      if (!userStates[user.id]) userStates[user.id] = { state: '' };
+      if (!userStates[user.id].data) userStates[user.id].data = {};
+      userStates[user.id].data.pairForSlippage = pair;
+      userStates[user.id].state = 'market_enter_custom_slippage';
+      await bot.editMessageText(`⚙️ Enter slippage percent for ${pair} (e.g., 0.5 or 1 or 2):`, { chat_id: chatId, message_id: messageId, reply_markup: { inline_keyboard: [[{ text: '🔙 Back', callback_data: `market_pair_${pair}` }]] } });
+      return;
+    }
+    if (data.startsWith('market_buy_')) {
+      const pair = data.slice('market_buy_'.length);
+      const [inp, outp] = pair.split('-');
+      const st = userStates[user.id] || { state: '', data: {} };
+      const amount = st?.data?.quoteAmount as number | undefined;
+      if (!amount || amount <= 0) {
+        await handleMarketStartTrade(chatId, user, messageId, inp, outp, 'buy');
+      } else {
+        // Store trading parameters before going to confirm
+        if (!userStates[user.id]) userStates[user.id] = { state: '' };
+        if (!userStates[user.id].data) userStates[user.id].data = {};
+        userStates[user.id].data.inputSymbol = inp;
+        userStates[user.id].data.outputSymbol = outp;
+        userStates[user.id].data.side = 'buy';
+        
+        const confirmText = `Please confirm trade amount: ${amount}`;
+        await bot.editMessageText(confirmText, {
+          chat_id: chatId,
+          message_id: messageId,
+          reply_markup: { inline_keyboard: [[{ text: '✅ Confirm', callback_data: `market_confirm_${amount}` } , { text: '❌ Cancel', callback_data: 'market' }]] }
+        });
+      }
       return;
     }
     if (data.startsWith('market_sell_')) {
-      const [_, pair] = data.split('_');
+      const pair = data.slice('market_sell_'.length);
       const [inp, outp] = pair.split('-');
-      await handleMarketStartTrade(chatId, user, messageId, inp, outp, 'sell');
+      const st = userStates[user.id] || { state: '', data: {} };
+      const amount = st?.data?.quoteAmount as number | undefined;
+      if (!amount || amount <= 0) {
+        await handleMarketStartTrade(chatId, user, messageId, inp, outp, 'sell');
+      } else {
+        // Store trading parameters before going to confirm
+        if (!userStates[user.id]) userStates[user.id] = { state: '' };
+        if (!userStates[user.id].data) userStates[user.id].data = {};
+        userStates[user.id].data.inputSymbol = inp;
+        userStates[user.id].data.outputSymbol = outp;
+        userStates[user.id].data.side = 'sell';
+        
+        const confirmText = `Please confirm trade amount: ${amount}`;
+        await bot.editMessageText(confirmText, {
+          chat_id: chatId,
+          message_id: messageId,
+          reply_markup: { inline_keyboard: [[{ text: '✅ Confirm', callback_data: `market_confirm_${amount}` } , { text: '❌ Cancel', callback_data: 'market' }]] }
+        });
+      }
       return;
     }
     if (data.startsWith('market_confirm_')) {
@@ -312,6 +377,9 @@ async function handleCallbackQuery(query: TelegramBot.CallbackQuery) {
       await handleTransferConfirmation(chatId, user, messageId, amount);
       return;
     }
+    // Always ack callback quickly to avoid Telegram 400 (query timeout)
+    await bot.answerCallbackQuery(query.id);
+    
     switch (data) {
       case 'wallet':
         await handleWalletCallback(chatId, user, messageId);
@@ -351,6 +419,11 @@ async function handleCallbackQuery(query: TelegramBot.CallbackQuery) {
 
 async function handleMarketMenu(chatId: number, user: TelegramBot.User, messageId: number) {
   const { networkInfo } = getNetworkInfo();
+  if (!userStates[user.id]) userStates[user.id] = { state: '' };
+  if (!userStates[user.id].data) userStates[user.id].data = {};
+  if (typeof userStates[user.id].data.slippageBps !== 'number') {
+    userStates[user.id].data.slippageBps = 100; // default 1%
+  }
   const text = `📈 Market & Trading\n\n` +
     `• Real-time quotes via Jupiter\n` +
     `• Network: ${networkInfo}\n\n` +
@@ -365,41 +438,53 @@ async function handleMarketMenu(chatId: number, user: TelegramBot.User, messageI
 
 async function handleMarketQuote(chatId: number, user: TelegramBot.User, messageId: number, inputSymbol: string, outputSymbol: string) {
   try {
-    const { COMMON_MINTS, getNetworkFromEnv, fetchPrice } = await import('../utils/tradingUtils');
+    const { COMMON_MINTS, getNetworkFromEnv, fetchPrice, resolveMintSymbol } = await import('../utils/tradingUtils');
     const net = getNetworkFromEnv();
-    type Sym = 'SOL' | 'USDC' | 'USDT';
-    const inMint = COMMON_MINTS[net][inputSymbol as Sym];
-    const outMint = COMMON_MINTS[net][outputSymbol as Sym];
+    const inSym = resolveMintSymbol(inputSymbol);
+    const outSym = resolveMintSymbol(outputSymbol);
+    const inMint = inSym ? COMMON_MINTS[net][inSym] : undefined;
+    const outMint = outSym ? COMMON_MINTS[net][outSym] : undefined;
     if (!inMint || !outMint) {
-      await bot.answerCallbackQuery(undefined as any, { text: 'Unsupported pair' });
+      await bot.editMessageText('❌ Unsupported pair', {
+        chat_id: chatId,
+        message_id: messageId
+      });
       return;
     }
 
-    // Default quote amount: 0.1 SOL or 10 USDC depending on input
+    // Amount handling
+    if (!userStates[user.id]) userStates[user.id] = { state: '' };
+    if (!userStates[user.id].data) userStates[user.id].data = {};
+    const slippageBps = typeof userStates[user.id].data.slippageBps === 'number' ? userStates[user.id].data.slippageBps : 100;
+    const customAmount = typeof userStates[user.id].data.quoteAmount === 'number' ? userStates[user.id].data.quoteAmount : undefined;
+
     const decimals = inputSymbol === 'SOL' ? 9 : 6;
     const defaultHuman = inputSymbol === 'SOL' ? 0.1 : 10;
-    const amountAtomic = BigInt(Math.floor(defaultHuman * Math.pow(10, decimals))).toString();
+    const humanAmount = typeof customAmount === 'number' && customAmount > 0 ? customAmount : defaultHuman;
+    const amountAtomic = BigInt(Math.floor(humanAmount * Math.pow(10, decimals))).toString();
 
     await bot.editMessageText(`🔄 Fetching quote for ${inputSymbol} → ${outputSymbol}...`, {
       chat_id: chatId,
       message_id: messageId
     });
 
-    const quote = await fetchPrice(inMint, outMint, amountAtomic, 100);
+    const quote = await fetchPrice(inMint, outMint, amountAtomic, slippageBps);
     const outDecimals = outputSymbol === 'SOL' ? 9 : 6;
     const outHuman = Number(quote.outAmount) / Math.pow(10, outDecimals);
     const priceImpact = (parseFloat(quote.priceImpactPct) * 100).toFixed(3);
 
     const txt = `📊 Quote (${inputSymbol} → ${outputSymbol})\n\n` +
-      `• Input: ${defaultHuman} ${inputSymbol}\n` +
+      `• Input: ${humanAmount} ${inputSymbol}\n` +
       `• Estimated Output: ${outHuman.toFixed(6)} ${outputSymbol}\n` +
-      `• Slippage: ${quote.slippageBps / 100}%\n` +
+      `• Slippage: ${(slippageBps / 100).toFixed(2)}%\n` +
       `• Price Impact: ${priceImpact}%`;
 
     const keyboard = {
       reply_markup: {
         inline_keyboard: [
           [ { text: '🔁 Refresh Quote', callback_data: `market_pair_${inputSymbol}-${outputSymbol}` } ],
+          [ { text: '✏️ Amount', callback_data: `market_amount_${inputSymbol}-${outputSymbol}` }, { text: '⚙️ Slippage', callback_data: `market_slip_custom_${inputSymbol}-${outputSymbol}` } ],
+          [ { text: '0.5%', callback_data: `market_slippage_50_${inputSymbol}-${outputSymbol}` }, { text: '1%', callback_data: `market_slippage_100_${inputSymbol}-${outputSymbol}` }, { text: '2%', callback_data: `market_slippage_200_${inputSymbol}-${outputSymbol}` } ],
           [ { text: `🟢 Buy ${outputSymbol} with ${inputSymbol}`, callback_data: `market_buy_${inputSymbol}-${outputSymbol}` } ],
           [ { text: `🔴 Sell ${outputSymbol} for ${inputSymbol}`, callback_data: `market_sell_${outputSymbol}-${inputSymbol}` } ],
           [ { text: '🔙 Back', callback_data: 'market' } ]
@@ -444,18 +529,41 @@ async function handleMarketConfirm(chatId: number, user: TelegramBot.User, messa
   try {
     const st = userStates[user.id];
     if (!st || !st.data) return;
-    const { inputSymbol, outputSymbol, side } = st.data;
-    const { COMMON_MINTS, getNetworkFromEnv, fetchPrice, createSwapTransaction, signAndSendSwapTransaction } = await import('../utils/tradingUtils');
+    const { inputSymbol, outputSymbol, side, quoteAmount, slippageBps } = st.data;
+    const { COMMON_MINTS, getNetworkFromEnv, fetchPrice, createSwapTransaction, signAndSendSwapTransaction, resolveMintSymbol } = await import('../utils/tradingUtils');
     const net = getNetworkFromEnv();
-    type Sym = 'SOL' | 'USDC' | 'USDT';
-    const inMint = COMMON_MINTS[net][(inputSymbol as Sym)];
-    const outMint = COMMON_MINTS[net][(outputSymbol as Sym)];
+    const inSym = resolveMintSymbol(inputSymbol);
+    const outSym = resolveMintSymbol(outputSymbol);
+    
+    if (!inSym || !outSym) {
+      await bot.editMessageText(
+        `❌ Unsupported trading pair: ${inputSymbol} → ${outputSymbol}\n\n` +
+        `Supported tokens: SOL, USDC, USDT`, 
+        { chat_id: chatId, message_id: messageId }
+      );
+      return;
+    }
+    
+    const inMint = COMMON_MINTS[net][inSym];
+    const outMint = COMMON_MINTS[net][outSym];
+    
+    if (!inMint || !outMint) {
+      await bot.editMessageText(
+        `❌ Missing mint addresses for ${inputSymbol} → ${outputSymbol} on ${net}\n\n` +
+        `Please try again or contact support.`, 
+        { chat_id: chatId, message_id: messageId }
+      );
+      return;
+    }
+    
     const decimals = inputSymbol === 'SOL' ? 9 : 6;
-    const amountAtomic = BigInt(Math.floor(amount * Math.pow(10, decimals))).toString();
+    const humanAmount = typeof quoteAmount === 'number' && quoteAmount > 0 ? quoteAmount : amount;
+    const amountAtomic = BigInt(Math.floor(humanAmount * Math.pow(10, decimals))).toString();
 
-    // Build quote
+    // Build quote with selected slippage (default 1%)
     await bot.editMessageText('🔄 Building route...', { chat_id: chatId, message_id: messageId });
-    const quote = await fetchPrice(inMint, outMint, amountAtomic, 100);
+    const bps = typeof slippageBps === 'number' ? slippageBps : 100;
+    const quote = await fetchPrice(inMint, outMint, amountAtomic, bps);
 
     // Get user wallet and private key
     const { getUserWallet, getUserWalletPrivateKey } = await import('../services/walletService');
@@ -464,11 +572,66 @@ async function handleMarketConfirm(chatId: number, user: TelegramBot.User, messa
     const pk = await getUserWalletPrivateKey(wallet.address);
     if (!pk) throw new Error('Missing private key');
 
+    // Check balance before creating transaction
+    const { getWalletBalance, getAllTokensInfoOfUserWallet } = await import('../utils/blockchainUtils');
+    const solBalanceStr = await getWalletBalance(wallet.address);
+    const solLamports = Math.floor(parseFloat(solBalanceStr) * 1e9);
+    
+    // Calculate required lamports based on input token
+    let requiredLamports = 5_000_000; // Base fee buffer (0.005 SOL for fees + account creation)
+    
+    if (inputSymbol === 'SOL') {
+      // If swapping SOL, need swap amount + fees
+      const swapAmountLamports = BigInt(amountAtomic);
+      requiredLamports += Number(swapAmountLamports);
+    }
+    
+    if (solLamports < requiredLamports) {
+      const requiredSOL = (requiredLamports / 1e9).toFixed(4);
+      const currentSOL = (solLamports / 1e9).toFixed(4);
+      await bot.editMessageText(
+        `❌ Insufficient SOL balance!\n\n` +
+        `Current: ${currentSOL} SOL\n` +
+        `Required: ${requiredSOL} SOL\n\n` +
+        `Please add more SOL to your wallet.`, 
+        { chat_id: chatId, message_id: messageId }
+      );
+      return;
+    }
+
+    // If swapping tokens (not SOL), verify token balance
+    if (inputSymbol !== 'SOL') {
+      try {
+        const tokenBalances = await getAllTokensInfoOfUserWallet(wallet.address);
+        const inputToken = tokenBalances.find(token => 
+          token.symbol.toLowerCase() === inputSymbol.toLowerCase() ||
+          token.token_address === inMint
+        );
+        
+        if (!inputToken) {
+          await bot.editMessageText(`❌ You don't have any ${inputSymbol} tokens in your wallet.`, 
+            { chat_id: chatId, message_id: messageId });
+          return;
+        }
+        
+        const availableBalance = parseFloat(inputToken.balance);
+        if (availableBalance < humanAmount) {
+          await bot.editMessageText(
+            `❌ Insufficient ${inputSymbol} balance!\n\n` +
+            `Available: ${availableBalance} ${inputSymbol}\n` +
+            `Required: ${humanAmount} ${inputSymbol}`, 
+            { chat_id: chatId, message_id: messageId }
+          );
+          return;
+        }
+      } catch (error) {
+        console.warn('Could not verify token balance, proceeding with swap:', error);
+      }
+    }
+
     // Create swap transaction
     const serialized = await createSwapTransaction(quote, wallet.address);
-    // Sign and send
-    const sig = await signAndSendSwapTransaction(serialized, pk);
-
+    const sig = await signAndSendSwapTransaction(serialized , pk);
     // Success UI
     const { getSolanaNetworkInfo, getSolscanLink } = await import('../utils/blockchainUtils');
     const { explorerName } = getSolanaNetworkInfo();
@@ -484,7 +647,24 @@ async function handleMarketConfirm(chatId: number, user: TelegramBot.User, messa
     delete userStates[user.id].data;
   } catch (e) {
     console.error('Trade error', e);
-    await bot.editMessageText('❌ Trade failed. Please try again later.', { chat_id: chatId, message_id: messageId, reply_markup: createMarketMenuKeyboard().reply_markup });
+    
+    // Show specific error message if available
+    let errorMessage = '❌ Trade failed. Please try again later.';
+    if (e instanceof Error) {
+      if (e.message.includes('Insufficient SOL')) {
+        errorMessage = `❌ ${e.message}`;
+      } else if (e.message.includes('Transaction simulation failed')) {
+        errorMessage = '❌ Transaction failed - please check your balance and network conditions.';
+      } else if (e.message.includes('Price moved too much')) {
+        errorMessage = '❌ Price moved too much during swap. Try increasing slippage tolerance.';
+      }
+    }
+    
+    await bot.editMessageText(errorMessage, { 
+      chat_id: chatId, 
+      message_id: messageId, 
+      reply_markup: createMarketMenuKeyboard().reply_markup 
+    });
   }
 }
 
@@ -1448,7 +1628,7 @@ function setupBotHandlers() {
   bot.on('callback_query', handleCallbackQuery);
 
   // Handle all other messages
-  bot.on('message', (msg) => {
+  bot.on('message', async (msg) => {
     if (msg.text && !msg.text.startsWith('/')) {
       const user = msg.from;
       if (!user) return;
@@ -1480,6 +1660,35 @@ function setupBotHandlers() {
               ]
             }
           });
+          return;
+        } else if (userState.state === 'market_enter_quote_amount') {
+          const amount = parseFloat(msg.text!.trim());
+          if (isNaN(amount) || amount <= 0) {
+            bot.sendMessage(msg.chat.id, '❌ Invalid amount. Please enter a positive number.');
+            return;
+          }
+          userStates[user.id].data.quoteAmount = amount;
+          const pair = userStates[user.id].data.pairForAmount as string;
+          userStates[user.id].state = '';
+          await bot.sendMessage(msg.chat.id, `✅ Amount set to ${amount}. Refreshing quote...`);
+          const [inp, outp] = pair.split('-');
+          const { message_id } = await bot.sendMessage(msg.chat.id, '🔄 Updating quote...');
+          await handleMarketQuote(msg.chat.id, user, message_id, inp, outp);
+          return;
+        } else if (userState.state === 'market_enter_custom_slippage') {
+          const perc = parseFloat(msg.text!.trim());
+          if (isNaN(perc) || perc <= 0 || perc > 50) {
+            bot.sendMessage(msg.chat.id, '❌ Invalid slippage. Enter a percent between 0 and 50.');
+            return;
+          }
+          const bps = Math.round(perc * 100);
+          userStates[user.id].data.slippageBps = bps;
+          const pair = userStates[user.id].data.pairForSlippage as string;
+          userStates[user.id].state = '';
+          await bot.sendMessage(msg.chat.id, `✅ Slippage set to ${perc}%. Refreshing quote...`);
+          const [inp, outp] = pair.split('-');
+          const { message_id } = await bot.sendMessage(msg.chat.id, '🔄 Updating quote...');
+          await handleMarketQuote(msg.chat.id, user, message_id, inp, outp);
           return;
         }
       }
