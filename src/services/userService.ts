@@ -126,6 +126,90 @@ export async function hasWallet(telegramId: number): Promise<boolean> {
   return await userHasWallet(telegramId);
 }
 
+// Find user by username (for P2P transfers)
+export async function findByUsername(username: string): Promise<IUser | null> {
+  try {
+    // Remove @ if present
+    const cleanUsername = username.startsWith('@') ? username.slice(1) : username;
+    return await User.findOne({ username: cleanUsername });
+  } catch (error) {
+    console.error('Error finding user by username:', error);
+    return null;
+  }
+}
+
+// Find user by multiple identifiers (for P2P transfers)
+export async function findUserForP2P(identifier: string): Promise<{user: IUser | null, identifierType: 'telegramId' | 'username' | 'invalid'}> {
+  try {
+    // Check if it's a Telegram ID (numeric)
+    const telegramId = parseInt(identifier);
+    if (!isNaN(telegramId) && telegramId > 0) {
+      const user = await findByTelegramId(telegramId);
+      return { user, identifierType: 'telegramId' };
+    }
+
+    // Check if it's a username (starts with @ or just username)
+    const cleanUsername = identifier.startsWith('@') ? identifier.slice(1) : identifier;
+    if (cleanUsername.length > 0 && /^[a-zA-Z0-9_]+$/.test(cleanUsername)) {
+      const user = await findByUsername(cleanUsername);
+      return { user, identifierType: 'username' };
+    }
+
+    return { user: null, identifierType: 'invalid' };
+  } catch (error) {
+    console.error('Error finding user for P2P:', error);
+    return { user: null, identifierType: 'invalid' };
+  }
+}
+
+// Validate P2P recipient (user exists and has wallet)
+export async function validateP2PRecipient(identifier: string): Promise<{
+  isValid: boolean;
+  user: IUser | null;
+  walletAddress: string | null;
+  error?: string;
+}> {
+  try {
+    const { user, identifierType } = await findUserForP2P(identifier);
+    
+    if (!user) {
+      return {
+        isValid: false,
+        user: null,
+        walletAddress: null,
+        error: identifierType === 'invalid' 
+          ? 'Invalid identifier format. Use Telegram ID (number) or username (@username)'
+          : 'User not found in our system'
+      };
+    }
+
+    // Check if user has a wallet
+    const userWallet = await getUserWallet(user.telegramId);
+    if (!userWallet) {
+      return {
+        isValid: false,
+        user: user,
+        walletAddress: null,
+        error: 'Recipient has not created a wallet yet'
+      };
+    }
+
+    return {
+      isValid: true,
+      user: user,
+      walletAddress: userWallet.address
+    };
+  } catch (error) {
+    console.error('Error validating P2P recipient:', error);
+    return {
+      isValid: false,
+      user: null,
+      walletAddress: null,
+      error: 'System error while validating recipient'
+    };
+  }
+}
+
 // Get user wallet info with balance (delegates to walletService)
 export async function getUserWalletInfo(telegramId: number): Promise<{
   address: string;

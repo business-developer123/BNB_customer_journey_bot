@@ -17,23 +17,42 @@ A Telegram bot for crypto trading with BNB wallet integration.
    - Wallet balance checking
    - Secure wallet management
 
+### ✅ Completed Features
+
+3. **Vue Marché & Trading** 🆕
+   - Real-time price consultation (SOL, USDC, USDT)
+   - Crypto buys/sells with instant confirmation in Telegram
+   - Multiple trading pairs with slippage control
+   - Swap transactions via Jupiter protocol
+
+4. **P2P Transfers** 🆕
+   - Send crypto to other users via Telegram ID or username
+   - User discovery by @username or Telegram ID
+   - Recipient validation (checks if user exists and has wallet)
+   - Support for both SOL and SPL token transfers
+   - Real-time notifications for sender and recipient
+   - Transaction history with blockchain explorer links
+
+5. **NFT Management** 🆕
+   - Browse and view NFT collections with Moralis integration
+   - Transfer NFTs between users (P2P NFT transfers)
+   - Event ticketing system with blockchain validation
+   - NFT metadata display with images and attributes
+   - Support for both collectibles and event tickets
+   - Anti-fraud protection with ownership verification
+
+6. **Event Ticketing System** 🆕
+   - Create events with multiple ticket categories (VIP, Standard, Group)
+   - Mint tickets as NFTs with unique metadata
+   - Purchase tickets directly through Telegram
+   - Blockchain-based entry validation
+   - Prevent ticket reuse with smart contract logic
+   - QR code generation for event entry
+   - Admin controls for event creation and management
+
 ### 🚧 In Development
 
-3. **Crypto Trading**
-   - Real-time crypto prices
-   - Buy/sell cryptocurrencies
-   - Order management
-
-4. **P2P Transfers**
-   - Send crypto to other users
-   - Transaction history
-
-5. **NFT Management**
-   - Browse and view NFTs
-   - Buy/sell NFTs
-   - NFT transfers
-
-6. **Orange Money Integration**
+7. **Orange Money Integration**
    - Deposit funds via Orange Money
    - Withdraw to Orange Money
 
@@ -120,12 +139,61 @@ backend/
 #### Custom Wallet Import
 - Users can import existing wallets using private keys
 - Supports 64-character hexadecimal format (with or without 0x prefix)
-- Replaces existing wallet if any
+
+### P2P Transfer Guide
+
+#### How to Send Crypto to Another User
+
+1. **Start P2P Transfer**: Go to Wallet → "👥 P2P Transfer"
+2. **Enter Recipient**: Send recipient's Telegram ID (e.g., 123456789) or username (e.g., @johndoe)
+3. **Select Token**: Choose which crypto to send (SOL, USDC, USDT, etc.)
+4. **Enter Amount**: Specify how much to transfer
+5. **Confirm**: Review details and confirm the transfer
+6. **Complete**: Both sender and recipient get notifications with transaction details
+
+#### Features
+- **User Discovery**: Find recipients by Telegram ID or username
+- **Validation**: Automatic check if recipient exists and has a wallet
+- **Token Support**: Send any token in your wallet (SOL and SPL tokens)
+- **Notifications**: Both parties receive instant notifications
+- **Transaction Links**: Direct links to view transactions on Solscan
+- **Error Handling**: Clear error messages for invalid recipients or insufficient funds
+
+### NFT Management Guide
+
+#### How to View Your NFTs
+
+1. **Access NFTs**: Go to Main Menu → "🖼️ My NFTs"
+2. **Browse Collection**: View all NFTs, filter by tickets or collectibles
+3. **NFT Details**: See metadata, images, and attributes
+4. **Transfer NFTs**: Send NFTs to other users via P2P transfer
+
+#### Event Ticketing System
+
+**For Users:**
+1. **Browse Events**: Go to Main Menu → "🎫 Events"
+2. **Select Event**: Choose from available events
+3. **Pick Category**: VIP, Standard, or Group tickets
+4. **Purchase**: Buy tickets directly with SOL
+5. **Event Entry**: Present ticket NFT at event
+
+**For Admins:**
+1. **Create Event**: Use admin controls to create new events
+2. **Set Categories**: Define ticket types and quantities
+3. **Mint Tickets**: Automatically create ticket NFTs
+4. **Manage Sales**: Monitor ticket sales and revenue
+5. **Validate Entry**: Scan QR codes to validate tickets
+
+#### NFT Features
+- **Ownership Verification**: Blockchain-based proof of ownership
+- **Anti-Fraud Protection**: Immutable NFT records prevent forgery
+- **Metadata Storage**: IPFS storage via Pinata for permanence
+- **Transfer Security**: Secure P2P transfers between verified wallets
 
 #### Balance Checking
-- Real-time BNB balance checking
-- Connects to BSC network for accurate balance
-- Displays balance in BNB format
+- Real-time SOL balance checking
+- Connects to Solana network for accurate balance
+- Displays balance in SOL format
 
 ### Security Features
 

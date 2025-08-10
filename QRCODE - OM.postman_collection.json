@@ -1,0 +1,610 @@
+{
+	"info": {
+		"_postman_id": "e5337ed0-7b25-4b5f-bd95-60535bad1f68",
+		"name": "QRCODE - OM",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+		"_exporter_id": "46009519",
+		"_collection_link": "https://nexthope.postman.co/workspace/nexthope's-Workspace~f1f8b148-fe34-4421-82a4-9a856d8fb08e/collection/46009519-e5337ed0-7b25-4b5f-bd95-60535bad1f68?action=share&source=collection_link&creator=46009519"
+	},
+	"item": [
+		{
+			"name": "Search transaction APIs",
+			"item": [
+				{
+					"name": "Search transactions",
+					"request": {
+						"auth": {
+							"type": "bearer",
+							"bearer": [
+								{
+									"key": "token",
+									"value": "",
+									"type": "string"
+								}
+							]
+						},
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "https://api.sandbox.orange-sonatel.com/api/eWallet/v1/transactions",
+							"protocol": "https",
+							"host": [
+								"api",
+								"sandbox",
+								"orange-sonatel",
+								"com"
+							],
+							"path": [
+								"api",
+								"eWallet",
+								"v1",
+								"transactions"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Search transactions by id",
+					"request": {
+						"auth": {
+							"type": "bearer",
+							"bearer": [
+								{
+									"key": "token",
+									"value": "",
+									"type": "string"
+								}
+							]
+						},
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "https://api.sandbox.orange-sonatel.com/api/eWallet/v1/transactions?transactionId={transactionId}",
+							"protocol": "https",
+							"host": [
+								"api",
+								"sandbox",
+								"orange-sonatel",
+								"com"
+							],
+							"path": [
+								"api",
+								"eWallet",
+								"v1",
+								"transactions"
+							],
+							"query": [
+								{
+									"key": "transactionId",
+									"value": "{transactionId}"
+								}
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Search transactions by status",
+					"request": {
+						"auth": {
+							"type": "bearer",
+							"bearer": [
+								{
+									"key": "token",
+									"value": "",
+									"type": "string"
+								}
+							]
+						},
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "https://api.sandbox.orange-sonatel.com/api/eWallet/v1/transactions?status=",
+							"protocol": "https",
+							"host": [
+								"api",
+								"sandbox",
+								"orange-sonatel",
+								"com"
+							],
+							"path": [
+								"api",
+								"eWallet",
+								"v1",
+								"transactions"
+							],
+							"query": [
+								{
+									"key": "status",
+									"value": ""
+								}
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Search transactions between dates",
+					"request": {
+						"auth": {
+							"type": "bearer",
+							"bearer": [
+								{
+									"key": "token",
+									"value": "",
+									"type": "string"
+								}
+							]
+						},
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "https://api.sandbox.orange-sonatel.com/api/eWallet/v1/transactions?fromDateTime=2021-06-20T00:00:00&toDateTime=2021-06-24T23:59:59",
+							"protocol": "https",
+							"host": [
+								"api",
+								"sandbox",
+								"orange-sonatel",
+								"com"
+							],
+							"path": [
+								"api",
+								"eWallet",
+								"v1",
+								"transactions"
+							],
+							"query": [
+								{
+									"key": "fromDateTime",
+									"value": "2021-06-20T00:00:00"
+								},
+								{
+									"key": "toDateTime",
+									"value": "2021-06-24T23:59:59"
+								}
+							]
+						}
+					},
+					"response": []
+				}
+			],
+			"event": [
+				{
+					"listen": "prerequest",
+					"script": {
+						"type": "text/javascript",
+						"exec": [
+							""
+						]
+					}
+				},
+				{
+					"listen": "test",
+					"script": {
+						"type": "text/javascript",
+						"exec": [
+							""
+						]
+					}
+				}
+			]
+		},
+		{
+			"name": "QR CODE Notification APIs",
+			"item": [
+				{
+					"name": "Merchant callback",
+					"event": [
+						{
+							"listen": "prerequest",
+							"script": {
+								"exec": [
+									"function generateCorrelationId(){",
+									"    var dt = new Date().getTime();",
+									"    var uuid = 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {",
+									"        var r = (dt + Math.random()*16)%16 | 0;",
+									"        dt = Math.floor(dt/16);",
+									"        return (c=='x' ? r :(r&0x3|0x8)).toString(16);",
+									"    });",
+									"    return uuid;",
+									"}",
+									"pm.globals.set(\"CorrelationId\", generateCorrelationId());",
+									"console.log('generateCorrelationId => ', generateCorrelationId())",
+									"pm.globals.set(\"requestDate\", new Date());",
+									""
+								],
+								"type": "text/javascript"
+							}
+						},
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									""
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"auth": {
+							"type": "bearer",
+							"bearer": [
+								{
+									"key": "token",
+									"value": "",
+									"type": "string"
+								}
+							]
+						},
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": " {\n        \"apiKey\":\"string\",\n        \"code\": \"{code marchand}\",\n        \"name\": \"{nom du marchand/service}\",\n        \"callbackUrl\": \"https://my-callback-url.com\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "https://api.sandbox.orange-sonatel.com/api/notification/v1/merchantcallback",
+							"protocol": "https",
+							"host": [
+								"api",
+								"sandbox",
+								"orange-sonatel",
+								"com"
+							],
+							"path": [
+								"api",
+								"notification",
+								"v1",
+								"merchantcallback"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Merchant callback",
+					"event": [
+						{
+							"listen": "prerequest",
+							"script": {
+								"exec": [
+									"function generateCorrelationId(){",
+									"    var dt = new Date().getTime();",
+									"    var uuid = 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {",
+									"        var r = (dt + Math.random()*16)%16 | 0;",
+									"        dt = Math.floor(dt/16);",
+									"        return (c=='x' ? r :(r&0x3|0x8)).toString(16);",
+									"    });",
+									"    return uuid;",
+									"}",
+									"pm.globals.set(\"CorrelationId\", generateCorrelationId());",
+									"console.log('generateCorrelationId => ', generateCorrelationId())",
+									"pm.globals.set(\"requestDate\", new Date());",
+									""
+								],
+								"type": "text/javascript"
+							}
+						},
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									""
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"auth": {
+							"type": "bearer",
+							"bearer": [
+								{
+									"key": "token",
+									"value": "",
+									"type": "string"
+								}
+							]
+						},
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "https://api.sandbox.orange-sonatel.com/api/notification/v1/merchantcallback?code={code marchand}",
+							"protocol": "https",
+							"host": [
+								"api",
+								"sandbox",
+								"orange-sonatel",
+								"com"
+							],
+							"path": [
+								"api",
+								"notification",
+								"v1",
+								"merchantcallback"
+							],
+							"query": [
+								{
+									"key": "code",
+									"value": "{code marchand}"
+								}
+							]
+						}
+					},
+					"response": []
+				}
+			]
+		},
+		{
+			"name": "QR CODE APIs",
+			"item": [
+				{
+					"name": "Method 1 - QRCODE with amount",
+					"event": [
+						{
+							"listen": "prerequest",
+							"script": {
+								"exec": [
+									"function generateCorrelationId(){",
+									"    var dt = new Date().getTime();",
+									"    var uuid = 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {",
+									"        var r = (dt + Math.random()*16)%16 | 0;",
+									"        dt = Math.floor(dt/16);",
+									"        return (c=='x' ? r :(r&0x3|0x8)).toString(16);",
+									"    });",
+									"    return uuid;",
+									"}",
+									"pm.globals.set(\"CorrelationId\", generateCorrelationId());",
+									"console.log('generateCorrelationId => ', generateCorrelationId())",
+									"pm.globals.set(\"requestDate\", new Date());",
+									""
+								],
+								"type": "text/javascript"
+							}
+						},
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									""
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"auth": {
+							"type": "bearer",
+							"bearer": [
+								{
+									"key": "token",
+									"value": "",
+									"type": "string"
+								}
+							]
+						},
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"amount\": {\n    \"unit\": \"XOF\",\n    \"value\": 1\n  },\n  \"callbackCancelUrl\": \"https://my-cancel-url.com\",\n  \"callbackSuccessUrl\": \"https://my-success-url.com\",\n  \"code\": \"{code marchand}\",\n  \"metadata\": {},\n  \"name\": \"{nom du marchand/service}\",\n  \"validity\": 15\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "https://api.sandbox.orange-sonatel.com/api/eWallet/v4/qrcode",
+							"protocol": "https",
+							"host": [
+								"api",
+								"sandbox",
+								"orange-sonatel",
+								"com"
+							],
+							"path": [
+								"api",
+								"eWallet",
+								"v4",
+								"qrcode"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Method 2 - QRCODE without amount",
+					"event": [
+						{
+							"listen": "prerequest",
+							"script": {
+								"exec": [
+									"function generateCorrelationId(){",
+									"    var dt = new Date().getTime();",
+									"    var uuid = 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {",
+									"        var r = (dt + Math.random()*16)%16 | 0;",
+									"        dt = Math.floor(dt/16);",
+									"        return (c=='x' ? r :(r&0x3|0x8)).toString(16);",
+									"    });",
+									"    return uuid;",
+									"}",
+									"pm.globals.set(\"CorrelationId\", generateCorrelationId());",
+									"console.log('generateCorrelationId => ', generateCorrelationId())",
+									"pm.globals.set(\"requestDate\", new Date());",
+									""
+								],
+								"type": "text/javascript"
+							}
+						},
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									""
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"auth": {
+							"type": "bearer",
+							"bearer": [
+								{
+									"key": "token",
+									"value": "",
+									"type": "string"
+								}
+							]
+						},
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json",
+								"type": "text"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \n  \"callbackCancelUrl\": \"https://my-cancel-url.com\",\n  \"callbackSuccessUrl\": \"https://my-success-url.com\",\n  \"code\": \"{code marchand}\",\n  \"metadata\": {},\n  \"name\": \"{nom du marchand/service}\",\n  \"validity\": 15\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "https://api.sandbox.orange-sonatel.com/api/eWallet/v4/qrcode",
+							"protocol": "https",
+							"host": [
+								"api",
+								"sandbox",
+								"orange-sonatel",
+								"com"
+							],
+							"path": [
+								"api",
+								"eWallet",
+								"v4",
+								"qrcode"
+							]
+						}
+					},
+					"response": []
+				}
+			]
+		},
+		{
+			"name": "Get token",
+			"event": [
+				{
+					"listen": "test",
+					"script": {
+						"exec": [
+							"const auth = pm.response.json();",
+							"pm.test(\"Status Code is 200\", function () {",
+							"    pm.globals.set(\"TOKEN\", auth.access_token);",
+							"    pm.response.to.have.status(200);",
+							"});",
+							""
+						],
+						"type": "text/javascript"
+					}
+				}
+			],
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json",
+						"type": "text",
+						"disabled": true
+					},
+					{
+						"key": "grant_type",
+						"value": "client_credentials",
+						"type": "text",
+						"disabled": true
+					}
+				],
+				"body": {
+					"mode": "urlencoded",
+					"urlencoded": [
+						{
+							"key": "grant_type",
+							"value": "client_credentials",
+							"type": "text"
+						},
+						{
+							"key": "client_secret",
+							"value": "",
+							"type": "text"
+						},
+						{
+							"key": "client_id",
+							"value": "",
+							"type": "text"
+						}
+					]
+				},
+				"url": {
+					"raw": "https://api.sandbox.orange-sonatel.com/oauth/token",
+					"protocol": "https",
+					"host": [
+						"api",
+						"sandbox",
+						"orange-sonatel",
+						"com"
+					],
+					"path": [
+						"oauth",
+						"token"
+					]
+				}
+			},
+			"response": []
+		}
+	],
+	"event": [
+		{
+			"listen": "prerequest",
+			"script": {
+				"type": "text/javascript",
+				"exec": [
+					""
+				]
+			}
+		},
+		{
+			"listen": "test",
+			"script": {
+				"type": "text/javascript",
+				"exec": [
+					""
+				]
+			}
+		}
+	]
+}

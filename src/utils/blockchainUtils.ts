@@ -3,6 +3,7 @@ import Moralis from 'moralis';
 import { LAMPORTS_PER_SOL, Keypair, PublicKey } from '@solana/web3.js';
 import { Connection, clusterApiUrl } from '@solana/web3.js';
 import { sendAndConfirmTransaction, SystemProgram, Transaction } from '@solana/web3.js';
+import { createTransferInstruction, getOrCreateAssociatedTokenAccount, TOKEN_PROGRAM_ID } from '@solana/spl-token';
 import bs58 from 'bs58';
 import { getUserWalletPrivateKey } from '../services/walletService';
 
@@ -69,6 +70,8 @@ export async function getWalletBalance(address: string): Promise<string> {
     if (!isValidWalletAddress(address)) {
       throw new Error('Invalid wallet address format');
     }
+
+    console.log("SOLANA_RPC_PROVIDER", process.env.SOLANA_RPC_PROVIDER);
     const connection = new Connection(process.env.SOLANA_RPC_PROVIDER || clusterApiUrl('mainnet-beta'));
     const publicKey = new PublicKey(address);
     const balance = await connection.getBalance(publicKey);
@@ -184,6 +187,84 @@ export async function transferSOL(
   } catch (error) {
     console.error('❌ Error transferring SOL:', error);
     throw new Error(`Failed to transfer SOL: ${error instanceof Error ? error.message : 'Unknown error'}`);
+  }
+}
+
+// --- Transfer SPL Token ---
+export async function transferSPLToken(
+  senderAddress: string,
+  recipientAddress: string,
+  amount: string,
+  tokenMintAddress: string,
+  decimals: number = 6
+) {
+  try {
+    if (!isValidWalletAddress(recipientAddress)) {
+      throw new Error('Invalid recipient address format');
+    }
+    if (!isValidWalletAddress(tokenMintAddress)) {
+      throw new Error('Invalid token mint address format');
+    }
+    
+    const numAmount = parseFloat(amount);
+    if (isNaN(numAmount) || numAmount <= 0) {
+      throw new Error('Invalid amount provided');
+    }
+
+    const privateKey = await getUserWalletPrivateKey(senderAddress);
+    if (!privateKey) {
+      throw new Error('Private key not found');
+    }
+
+    const secretKey = Uint8Array.from(Buffer.from(privateKey, 'hex'));
+    const senderKeypair = Keypair.fromSecretKey(secretKey);
+    const connection = new Connection(process.env.SOLANA_RPC_PROVIDER || clusterApiUrl('mainnet-beta'));
+    
+    const senderPubkey = senderKeypair.publicKey;
+    const recipientPubkey = new PublicKey(recipientAddress);
+    const mintPubkey = new PublicKey(tokenMintAddress);
+    
+    // Get or create associated token accounts
+    const senderTokenAccount = await getOrCreateAssociatedTokenAccount(
+      connection,
+      senderKeypair,
+      mintPubkey,
+      senderPubkey
+    );
+    
+    const recipientTokenAccount = await getOrCreateAssociatedTokenAccount(
+      connection,
+      senderKeypair,
+      mintPubkey,
+      recipientPubkey
+    );
+    
+    // Convert amount to atomic units
+    const atomicAmount = Math.round(numAmount * Math.pow(10, decimals));
+    
+    // Create transfer instruction
+    const transferInstruction = createTransferInstruction(
+      senderTokenAccount.address,
+      recipientTokenAccount.address,
+      senderPubkey,
+      atomicAmount,
+      [],
+      TOKEN_PROGRAM_ID
+    );
+    
+    // Create and send transaction
+    const transaction = new Transaction().add(transferInstruction);
+    const signature = await sendAndConfirmTransaction(connection, transaction, [senderKeypair]);
+    const solscanLink = getSolscanLink(signature);
+    
+    return {
+      success: true,
+      transactionHash: signature,
+      solscanLink: solscanLink
+    };
+  } catch (error) {
+    console.error('❌ Error transferring SPL token:', error);
+    throw new Error(`Failed to transfer SPL token: ${error instanceof Error ? error.message : 'Unknown error'}`);
   }
 }
 
