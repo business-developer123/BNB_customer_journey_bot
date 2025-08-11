@@ -1,10 +1,10 @@
 import { getUserNFTs, transferNFTToUser, mintNFT, createEventTickets, validateTicketEntry, markTicketAsUsed, NFTMetadata, UserNFT, getNFTMetadata } from '../utils/nftUtils';
 import { getUserWallet, getUserWalletPrivateKey } from './walletService';
+import { getWalletBalance, transferSOL } from '../utils/blockchainUtils';
 import Event, { IEvent } from '../models/Event';
 import TicketPurchase, { ITicketPurchase } from '../models/TicketPurchase';
 import NFTListing, { INFTListing } from '../models/NFTListing';
 import NFTResale, { INFTResale } from '../models/NFTResale';
-import bs58 from 'bs58';
 
 interface NFTEvent {
     eventId: string;
@@ -66,10 +66,11 @@ interface NFTResale {
 }
 
 // Admin configuration
-const ADMIN_TELEGRAM_IDS = [7868262962]; // Add your admin Telegram ID here
+const adminTelegramId = process.env.TELEGRAM_ADMIN_ID || '';
+const ADMIN_TELEGRAM_IDS = [adminTelegramId]; // Add your admin Telegram ID here
 
 function isAdmin(telegramId: number): boolean {
-    return ADMIN_TELEGRAM_IDS.includes(telegramId);
+    return ADMIN_TELEGRAM_IDS.includes(telegramId.toString());
 }
 
 // Get NFT details by mint address
@@ -185,24 +186,47 @@ async function getUserNFTsWithFilters(telegramId: number, filter?: {
 async function getAllEvents(): Promise<NFTEvent[]> {
     try {
         const dbEvents = await Event.find({});
-        return dbEvents.map(dbEvent => ({
-            eventId: dbEvent.eventId,
-            name: dbEvent.name,
-            description: dbEvent.description,
-            date: dbEvent.date,
-            venue: dbEvent.venue,
-            imageUrl: dbEvent.imageUrl,
-            categories: dbEvent.categories.map(cat => ({
+        console.log(`🔍 getAllEvents: Found ${dbEvents.length} events in database`);
+        
+        const validEvents: NFTEvent[] = [];
+        
+        for (const dbEvent of dbEvents) {
+            console.log(`📋 Processing event: name="${dbEvent.name}", eventId="${dbEvent.eventId}"`);
+            
+            // Skip events with invalid eventId - they need to be fixed manually
+            if (!dbEvent.eventId || dbEvent.eventId === 'event' || dbEvent.eventId.length < 5) {
+                console.warn(`⚠️ Event "${dbEvent.name}" has invalid eventId: "${dbEvent.eventId}". This event needs manual fixing.`);
+                continue; // Skip this event until it's fixed
+            }
+            
+            // Validate categories have proper structure
+            const validCategories = dbEvent.categories.map(cat => ({
                 category: cat.category,
-                price: cat.price,
-                maxSupply: cat.maxSupply,
-                currentSupply: cat.currentSupply,
-                mintAddresses: cat.mintAddresses
-            })),
-            isActive: dbEvent.isActive,
-            createdBy: dbEvent.createdBy,
-            createdAt: dbEvent.createdAt
-        }));
+                price: cat.price || 0,
+                maxSupply: cat.maxSupply || 0,
+                currentSupply: cat.currentSupply || 0,
+                mintAddresses: Array.isArray(cat.mintAddresses) ? cat.mintAddresses : []
+            }));
+            
+            const validEvent: NFTEvent = {
+                eventId: dbEvent.eventId,
+                name: dbEvent.name,
+                description: dbEvent.description,
+                date: dbEvent.date,
+                venue: dbEvent.venue,
+                imageUrl: dbEvent.imageUrl,
+                categories: validCategories,
+                isActive: dbEvent.isActive !== false, // Default to true if not set
+                createdBy: dbEvent.createdBy,
+                createdAt: dbEvent.createdAt
+            };
+            
+            validEvents.push(validEvent);
+            console.log(`✅ Valid event processed: "${validEvent.name}" with eventId: "${validEvent.eventId}"`);
+        }
+        
+        console.log(`🎯 getAllEvents: Returning ${validEvents.length} valid events (${dbEvents.length - validEvents.length} invalid events skipped)`);
+        return validEvents;
     } catch (error) {
         console.error('Error getting all events:', error);
         return [];
@@ -212,8 +236,35 @@ async function getAllEvents(): Promise<NFTEvent[]> {
 // Get event by ID
 async function getEvent(eventId: string): Promise<NFTEvent | null> {
     try {
+        console.log(`🔍 Looking for event with ID: ${eventId}`);
+        
+        if (!eventId || eventId === 'event' || eventId.length < 5) {
+            console.log(`❌ Invalid eventId provided: "${eventId}"`);
+            return null;
+        }
+        
         const dbEvent = await Event.findOne({ eventId });
-        if (!dbEvent) return null;
+        
+        if (!dbEvent) {
+            console.log(`❌ Event not found in database for ID: ${eventId}`);
+            
+            // Debug: Check if there are any events in the database
+            const totalEvents = await Event.countDocuments();
+            console.log(`📊 Total events in database: ${totalEvents}`);
+            
+            if (totalEvents > 0) {
+                const sampleEvents = await Event.find().limit(3);
+                console.log(`📋 Sample events:`, sampleEvents.map(e => ({ 
+                    _id: e._id, 
+                    eventId: e.eventId, 
+                    name: e.name 
+                })));
+            }
+            
+            return null;
+        }
+        
+        console.log(`✅ Event found: ${dbEvent.name} (${dbEvent.eventId})`);
         
         return {
             eventId: dbEvent.eventId,
@@ -224,12 +275,12 @@ async function getEvent(eventId: string): Promise<NFTEvent | null> {
             imageUrl: dbEvent.imageUrl,
             categories: dbEvent.categories.map(cat => ({
                 category: cat.category,
-                price: cat.price,
-                maxSupply: cat.maxSupply,
-                currentSupply: cat.currentSupply,
-                mintAddresses: cat.mintAddresses
+                price: cat.price || 0,
+                maxSupply: cat.maxSupply || 0,
+                currentSupply: cat.currentSupply || 0,
+                mintAddresses: Array.isArray(cat.mintAddresses) ? cat.mintAddresses : []
             })),
-            isActive: dbEvent.isActive,
+            isActive: dbEvent.isActive !== false,
             createdBy: dbEvent.createdBy,
             createdAt: dbEvent.createdAt
         };
@@ -285,6 +336,11 @@ async function createEvent(
 
         const eventId = `event_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
         
+        // Validate eventId generation
+        if (!eventId || eventId === 'event' || eventId.length < 10) {
+            throw new Error('Failed to generate valid event ID');
+        }
+        
         console.log(`🔄 Creating NFT tickets for event: ${eventId}`);
         
         // Create NFT tickets for all categories
@@ -336,9 +392,20 @@ async function createEvent(
             createdAt: new Date()
         };
 
+        // Validate event object before saving
+        if (!newEvent.eventId || newEvent.eventId === 'event' || newEvent.eventId.length < 10) {
+            throw new Error('Invalid event ID generated');
+        }
+
         // Save to database
         const dbEvent = new Event(newEvent);
         await dbEvent.save();
+        
+        // Verify the event was saved correctly
+        const savedEvent = await Event.findOne({ eventId });
+        if (!savedEvent) {
+            throw new Error('Event was not saved to database');
+        }
         
         console.log(`✅ Event created successfully: ${eventId}`);
         console.log(`📊 Event summary: ${eventData.categories.length} categories, ${Object.values(ticketMints).flat().length} total tickets`);
@@ -411,6 +478,38 @@ async function purchaseTicket(
         }
         
         const mintAddress = categoryData.mintAddresses.shift()!;
+
+        // Check if user has sufficient SOL balance for payment
+        const userBalance = await getWalletBalance(userWallet.address);
+        const userBalanceNum = parseFloat(userBalance);
+        if (userBalanceNum < categoryData.price) {
+            throw new Error(`Insufficient SOL balance. You have ${userBalanceNum.toFixed(4)} SOL, but need ${categoryData.price} SOL for this ticket.`);
+        }
+
+        // Transfer payment from user to admin wallet
+        const adminWalletAddress = process.env.ADMIN_WALLET_ADDRESS;
+        if (!adminWalletAddress) {
+            throw new Error('Admin wallet address not configured. Please contact support.');
+        }
+
+        console.log(`💰 Processing payment: ${categoryData.price} SOL from user ${telegramId} to admin wallet`);
+        
+        // Get user's private key for the transfer
+        const userPrivateKey = await getUserWalletPrivateKey(userWallet.address);
+        if (!userPrivateKey) {
+            throw new Error('Unable to access user wallet for payment. Please contact support.');
+        }
+        
+        try {
+            await transferSOL(
+                userWallet.address,
+                adminWalletAddress,
+                categoryData.price.toString()
+            );
+            console.log(`✅ Payment successful: ${categoryData.price} SOL transferred to admin wallet`);
+        } catch (paymentError) {
+            throw new Error(`Payment failed: ${paymentError instanceof Error ? paymentError.message : 'Unknown error'}. Please ensure you have sufficient SOL and try again.`);
+        }
 
         // Transfer ticket to user (using admin private key)
         const adminPrivateKey = process.env.ADMIN_WALLET_PRIVATE_KEY || process.env.SOLANA_WALLET_PRIVATEKEY;
@@ -1569,6 +1668,176 @@ async function cleanupExpiredListings(): Promise<{
     }
 }
 
+// Debug function to check specific event by ID
+async function debugEventById(eventId: string): Promise<{
+    success: boolean;
+    event?: any;
+    error?: string;
+}> {
+    try {
+        console.log(`🔍 Debugging event ID: ${eventId}`);
+        
+        // Check database
+        const dbEvent = await Event.findOne({ eventId });
+        if (dbEvent) {
+            console.log(`✅ Event found in database: ${dbEvent.name}`);
+            return {
+                success: true,
+                event: {
+                    eventId: dbEvent.eventId,
+                    name: dbEvent.name,
+                    isActive: dbEvent.isActive,
+                    categories: dbEvent.categories.map((cat: any) => ({
+                        category: cat.category,
+                        price: cat.price,
+                        maxSupply: cat.maxSupply,
+                        currentSupply: cat.currentSupply,
+                        available: cat.mintAddresses.length
+                    }))
+                }
+            };
+        }
+        
+        // Check if eventId format is correct
+        console.log(`❌ Event not found in database. Checking format...`);
+        console.log(`Event ID format: ${eventId}`);
+        console.log(`Event ID type: ${typeof eventId}`);
+        console.log(`Event ID length: ${eventId.length}`);
+        
+        // List all events to see what's available
+        const allEvents = await Event.find({});
+        console.log(`📋 Total events in database: ${allEvents.length}`);
+        allEvents.forEach((event, index) => {
+            console.log(`${index + 1}. Event ID: "${event.eventId}" | Name: "${event.name}"`);
+        });
+        
+        return {
+            success: false,
+            error: `Event with ID "${eventId}" not found. Available events: ${allEvents.map(e => e.eventId).join(', ')}`
+        };
+    } catch (error) {
+        console.error('Error debugging event by ID:', error);
+        return {
+            success: false,
+            error: error instanceof Error ? error.message : 'Unknown error'
+        };
+    }
+}
+
+// Admin function to fix event prices (for existing events with wrong prices)
+async function fixEventPrices(eventId: string, adminTelegramId: number): Promise<{
+    success: boolean;
+    message?: string;
+    error?: string;
+}> {
+    try {
+        if (!isAdmin(adminTelegramId)) {
+            throw new Error('Only admins can fix event prices');
+        }
+
+        const event = await Event.findOne({ eventId });
+        if (!event) {
+            throw new Error('Event not found');
+        }
+
+        let updated = false;
+        const priceUpdates: string[] = [];
+
+        // Fix prices for each category
+        event.categories.forEach(cat => {
+            let newPrice = cat.price;
+            let reason = '';
+
+            if (cat.category === 'VIP' && cat.price !== 0.1) {
+                newPrice = 0.1;
+                reason = 'VIP should be 0.1 SOL';
+                updated = true;
+            } else if (cat.category === 'Standard' && cat.price !== 0.05) {
+                newPrice = 0.05;
+                reason = 'Standard should be 0.05 SOL';
+                updated = true;
+            } else if (cat.category === 'Group' && cat.price !== 0.03) {
+                newPrice = 0.03;
+                reason = 'Group should be 0.03 SOL';
+                updated = true;
+            }
+
+            if (updated) {
+                priceUpdates.push(`${cat.category}: ${cat.price} → ${newPrice} SOL (${reason})`);
+                cat.price = newPrice;
+            }
+        });
+
+        if (updated) {
+            await event.save();
+            console.log(`✅ Fixed prices for event ${eventId}:`, priceUpdates);
+            return {
+                success: true,
+                message: `Fixed prices: ${priceUpdates.join(', ')}`
+            };
+        } else {
+            return {
+                success: true,
+                message: 'All prices are already correct'
+            };
+        }
+
+    } catch (error) {
+        console.error('Error fixing event prices:', error);
+        return {
+            success: false,
+            error: error instanceof Error ? error.message : 'Unknown error'
+        };
+    }
+}
+
+// ONE-TIME CLEANUP: Fix existing events with invalid IDs (run this once manually)
+async function cleanupInvalidEventIds(): Promise<{ success: boolean; fixed: number; total: number; error?: string }> {
+    try {
+        console.log('🧹 Starting one-time cleanup of invalid event IDs...');
+        
+        const allEvents = await Event.find({});
+        console.log(`📊 Found ${allEvents.length} total events to check`);
+        
+        let fixedCount = 0;
+        
+        for (const event of allEvents) {
+            if (!event.eventId || event.eventId === 'event' || event.eventId.length < 5) {
+                console.log(`🔧 Fixing event "${event.name}" with invalid eventId: "${event.eventId}"`);
+                
+                const newEventId = `event_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+                
+                try {
+                    await Event.updateOne(
+                        { _id: event._id },
+                        { $set: { eventId: newEventId } }
+                    );
+                    console.log(`✅ Fixed event "${event.name}" with new eventId: "${newEventId}"`);
+                    fixedCount++;
+                } catch (updateError) {
+                    console.error(`❌ Failed to fix event "${event.name}":`, updateError);
+                }
+            }
+        }
+        
+        console.log(`🎯 Cleanup completed. Fixed ${fixedCount} out of ${allEvents.length} events`);
+        
+        return {
+            success: true,
+            fixed: fixedCount,
+            total: allEvents.length
+        };
+    } catch (error) {
+        console.error('Error during cleanup:', error);
+        return {
+            success: false,
+            fixed: 0,
+            total: 0,
+            error: error instanceof Error ? error.message : 'Unknown error'
+        };
+    }
+}
+
 // Export all functions for easy access
 export {
     // Core NFT functions
@@ -1597,6 +1866,8 @@ export {
     getEventStatistics,
     getAdminWalletNFTs,
     debugEventNFTs,
+    debugEventById,
+    fixEventPrices,
     
     // Transfer and management
     transferNFTBetweenUsers,
@@ -1607,6 +1878,7 @@ export {
     
     // Admin functions
     isAdmin,
+    cleanupInvalidEventIds,
     
     // Interfaces
     NFTEvent,

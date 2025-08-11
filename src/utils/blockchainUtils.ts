@@ -71,7 +71,6 @@ export async function getWalletBalance(address: string): Promise<string> {
       throw new Error('Invalid wallet address format');
     }
 
-    console.log("SOLANA_RPC_PROVIDER", process.env.SOLANA_RPC_PROVIDER);
     const connection = new Connection(process.env.SOLANA_RPC_PROVIDER || clusterApiUrl('mainnet-beta'));
     const publicKey = new PublicKey(address);
     const balance = await connection.getBalance(publicKey);

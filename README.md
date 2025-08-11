@@ -1,3 +1,5 @@
+# My Solana repo verify commit 👌
+
 # Crypto Trading Telegram Bot
 
 A Telegram bot for crypto trading with BNB wallet integration.
@@ -145,7 +147,7 @@ backend/
 #### How to Send Crypto to Another User
 
 1. **Start P2P Transfer**: Go to Wallet → "👥 P2P Transfer"
-2. **Enter Recipient**: Send recipient's Telegram ID (e.g., 123456789) or username (e.g., @johndoe)
+2. **Enter Recipient**: Send recipient's Telegram ID (e.g., your Telegram ID) or username (e.g., @johndoe)
 3. **Select Token**: Choose which crypto to send (SOL, USDC, USDT, etc.)
 4. **Enter Amount**: Specify how much to transfer
 5. **Confirm**: Review details and confirm the transfer

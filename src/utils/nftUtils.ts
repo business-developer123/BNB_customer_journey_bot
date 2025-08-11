@@ -60,7 +60,6 @@ export async function testPinataSetup(): Promise<{ success: boolean; message: st
 }
 
 // Initialize UMI with admin wallet for minting operations
-console.log("🥇🥇🥇", adminPrivateKey);
 if (adminPrivateKey) {
     try {
         let secretKey: Uint8Array;

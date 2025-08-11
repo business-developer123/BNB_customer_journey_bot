@@ -427,11 +427,16 @@ async function handleCallbackQuery(query: TelegramBot.CallbackQuery) {
     }
     if (data.startsWith('view_event_')) {
       const eventId = data.replace('view_event_', '');
+      console.log(`🔍 view_event_ callback received: data="${data}", extracted eventId="${eventId}"`);
       await handleViewEventCallback(chatId, user, messageId, eventId);
       return;
     }
     if (data.startsWith('purchase_ticket_')) {
-      const [eventId, category] = data.replace('purchase_ticket_', '').split('_');
+      // Fix: Extract category from the end and eventId from the middle
+      const parts = data.split('_');
+      const category = parts[parts.length - 1]; // Last part is always category
+      const eventId = parts.slice(1, -1).join('_'); // Everything between 'purchase_ticket' and category
+      console.log(`🔍 purchase_ticket_ callback received: data="${data}", extracted eventId="${eventId}", category="${category}"`);
       await handlePurchaseTicketCallback(chatId, user, messageId, eventId, category as 'VIP' | 'Standard' | 'Group');
       return;
     }
@@ -1185,7 +1190,7 @@ async function handleP2PTransferCallback(chatId: number, user: TelegramBot.User,
     p2pMessage += `📍 *Your Wallet:* \`${walletInfo.address}\`\n`;
     p2pMessage += `🌐 *Network:* ${networkInfo}\n\n`;
     p2pMessage += `*Enter recipient identifier:*\n`;
-    p2pMessage += `• Telegram ID (e.g., 123456789)\n`;
+    p2pMessage += `• Telegram ID (e.g., your Telegram ID)\n`;
     p2pMessage += `• Username (e.g., @johndoe)\n\n`;
     p2pMessage += `_Send the recipient's ID or username as a message._`;
 
@@ -1957,6 +1962,11 @@ async function handleEventListCallback(chatId: number, user: TelegramBot.User, m
     const { getAllEvents } = await import('../services/nftService');
     const events = await getAllEvents();
 
+    console.log(`🔍 handleEventListCallback: Retrieved ${events.length} events`);
+    events.forEach((event, index) => {
+      console.log(`📋 Event ${index + 1}: name="${event.name}", eventId="${event.eventId}"`);
+    });
+
     if (events.length === 0) {
       await bot.editMessageText(
         '📋 *All Events*\n\n' +
@@ -1988,7 +1998,10 @@ async function handleEventListCallback(chatId: number, user: TelegramBot.User, m
       eventListMessage += `📍 ${event.venue}\n`;
       eventListMessage += `🎫 ${availableTickets}/${totalTickets} tickets available\n\n`;
       
-      eventButtons.push([{ text: `🎫 ${event.name}`, callback_data: `view_event_${event.eventId}` }]);
+      const callbackData = `view_event_${event.eventId}`;
+      console.log(`🔗 Creating button for "${event.name}" with callback_data: "${callbackData}"`);
+      
+      eventButtons.push([{ text: `🎫 ${event.name}`, callback_data: callbackData }]);
     });
 
     eventButtons.push([{ text: '🔙 Back to Events', callback_data: 'events' }]);
@@ -2779,6 +2792,50 @@ function setupBotHandlers() {
     }
   });
 
+  // Admin command to clean up invalid event IDs (one-time use)
+  bot.onText(/\/cleanup_events/, async (msg) => {
+    const chatId = msg.chat.id;
+    const user = msg.from;
+    
+    if (!user) {
+      bot.sendMessage(chatId, '❌ User information not available.');
+      return;
+    }
+
+    const { isAdmin, cleanupInvalidEventIds } = await import('../services/nftService');
+    
+    if (!isAdmin(user.id)) {
+      bot.sendMessage(chatId, '❌ Access denied. Only admins can run this command.');
+      return;
+    }
+    
+    bot.sendMessage(chatId, '🧹 Starting cleanup of invalid event IDs... This may take a moment.');
+    
+    try {
+      const result = await cleanupInvalidEventIds();
+      
+      if (result.success) {
+        bot.sendMessage(chatId, 
+          `✅ *Event Cleanup Completed!*\n\n` +
+          `🔧 **Fixed:** ${result.fixed} events\n` +
+          `📊 **Total:** ${result.total} events\n\n` +
+          `🎯 All events now have valid IDs and should be accessible for ticket purchases!`,
+          { parse_mode: 'Markdown' }
+        );
+      } else {
+        bot.sendMessage(chatId, 
+          `❌ *Failed to cleanup events*\n\n` +
+          `Error: ${result.error || 'Unknown error'}\n\n` +
+          `Please check the logs and try again.`,
+          { parse_mode: 'Markdown' }
+        );
+      }
+    } catch (error) {
+      console.error('Error running event cleanup:', error);
+      bot.sendMessage(chatId, '❌ Error running event cleanup. Please try again.');
+    }
+  });
+
   // Handle callback queries (button clicks)
   bot.on('callback_query', handleCallbackQuery);
 
@@ -3132,13 +3189,13 @@ function proceedToCategories(chatId: number) {
   bot.sendMessage(chatId, 
     `**Step 6 of 6:** Ticket Categories\n` +
     'Type "default" for standard categories:\n' +
-    '• VIP: 10 tickets @ 1.0 SOL each\n' +
+    '• VIP: 10 tickets @ 0.1 SOL each\n' +
     '• Standard: 50 tickets @ 0.5 SOL each\n' +
     '• Group: 20 tickets @ 0.3 SOL each\n\n' +
     'Or provide custom JSON format:\n' +
     '```\n' +
     '[\n' +
-    '  {"category": "VIP", "price": 1.0, "maxSupply": 10, "baseImageUrl": "auto"},\n' +
+    '  {"category": "VIP", "price": 0.1, "maxSupply": 10, "baseImageUrl": "auto"},\n' +
     '  {"category": "Standard", "price": 0.5, "maxSupply": 50, "baseImageUrl": "auto"}\n' +
     ']\n' +
     '```',
@@ -3154,9 +3211,9 @@ async function handleEventCategoriesInput(msg: TelegramBot.Message) {
   
   if (categoriesInput.toLowerCase() === 'default') {
     categories = [
-      { category: 'VIP', price: 1.0, maxSupply: 10, baseImageUrl: userStates[user.id].data.eventData.imageUrl },
-      { category: 'Standard', price: 0.5, maxSupply: 50, baseImageUrl: userStates[user.id].data.eventData.imageUrl },
-      { category: 'Group', price: 0.3, maxSupply: 20, baseImageUrl: userStates[user.id].data.eventData.imageUrl }
+      { category: 'VIP', price: 0.1, maxSupply: 10, baseImageUrl: userStates[user.id].data.eventData.imageUrl },
+      { category: 'Standard', price: 0.05, maxSupply: 50, baseImageUrl: userStates[user.id].data.eventData.imageUrl },
+      { category: 'Group', price: 0.03, maxSupply: 20, baseImageUrl: userStates[user.id].data.eventData.imageUrl }
     ];
   } else {
     try {
@@ -3425,10 +3482,13 @@ async function handleCustomNFTImageInput(msg: TelegramBot.Message) {
 // Handle View Event callback
 async function handleViewEventCallback(chatId: number, user: TelegramBot.User, messageId: number, eventId: string) {
   try {
+    console.log(`🔍 handleViewEventCallback: Processing eventId="${eventId}"`);
+    
     const { getEvent } = await import('../services/nftService');
     const event = await getEvent(eventId);
 
     if (!event) {
+      console.log(`❌ Event not found for eventId: "${eventId}"`);
       await bot.editMessageText('❌ Event not found.', {
         chat_id: chatId,
         message_id: messageId,
@@ -3440,6 +3500,8 @@ async function handleViewEventCallback(chatId: number, user: TelegramBot.User, m
       });
       return;
     }
+
+    console.log(`✅ Event found: "${event.name}" with eventId: "${event.eventId}"`);
 
     let eventMessage = `🎫 **${event?.name}**\n\n`;
     eventMessage += `📝 ${event?.description}\n\n`;
@@ -3457,9 +3519,12 @@ async function handleViewEventCallback(chatId: number, user: TelegramBot.User, m
       eventMessage += `• **${cat.category}**: ${cat.price} SOL - ${available}/${total} available ${status}\n`;
       
       if (available > 0) {
+        const callbackData = `purchase_ticket_${eventId}_${cat.category}`;
+        console.log(`🔗 Creating buy button for "${event.name}" - ${cat.category} with callback_data: "${callbackData}"`);
+        
         ticketButtons.push([{ 
           text: `🎫 Buy ${cat.category} (${cat.price} SOL)`, 
-          callback_data: `purchase_ticket_${eventId}_${cat.category}` 
+          callback_data: callbackData 
         }]);
       }
     });
@@ -3491,13 +3556,27 @@ async function handleViewEventCallback(chatId: number, user: TelegramBot.User, m
 // Handle Purchase Ticket callback
 async function handlePurchaseTicketCallback(chatId: number, user: TelegramBot.User, messageId: number, eventId: string, category: 'VIP' | 'Standard' | 'Group') {
   try {
+    console.log(`🔍 Attempting to purchase ticket for event: ${eventId}, category: ${category}`);
+    
     const { purchaseTicket, getEvent } = await import('../services/nftService');
     const event = await getEvent(eventId);
 
     if (!event) {
-      await bot.editMessageText('❌ Event not found.', {
+      console.log(`❌ Event not found in database for eventId: ${eventId}`);
+      console.log(`🔍 Available events in database:`);
+      try {
+        const { getAllEvents } = await import('../services/nftService');
+        const allEvents = await getAllEvents();
+        console.log(`📋 Total events: ${allEvents.length}`);
+        allEvents.forEach(e => console.log(`  - ${e.eventId}: ${e.name}`));
+      } catch (debugError) {
+        console.log(`❌ Could not fetch all events for debugging: ${debugError}`);
+      }
+      
+      await bot.editMessageText(`❌ Event not found.\n\nEvent ID: \`${eventId}\`\n\nThis might happen if:\n• The event was deleted\n• The event ID is incorrect\n• There's a database issue\n\nPlease try viewing the events list again.`, {
         chat_id: chatId,
         message_id: messageId,
+        parse_mode: 'Markdown',
         reply_markup: {
           inline_keyboard: [
             [{ text: '🔙 Back to Events', callback_data: 'event_list' }]
