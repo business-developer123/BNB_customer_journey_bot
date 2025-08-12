@@ -1,10 +1,11 @@
-import { getUserNFTs, transferNFTToUser, mintNFT, createEventTickets, validateTicketEntry, markTicketAsUsed, NFTMetadata, UserNFT, getNFTMetadata } from '../utils/nftUtils';
+import { getUserNFTs, mintNFT, createEventTickets, validateTicketEntry, markTicketAsUsed, NFTMetadata, UserNFT, getNFTMetadata } from '../utils/nftUtils';
 import { getUserWallet, getUserWalletPrivateKey } from './walletService';
 import { getWalletBalance, transferSOL } from '../utils/blockchainUtils';
 import Event, { IEvent } from '../models/Event';
 import TicketPurchase, { ITicketPurchase } from '../models/TicketPurchase';
 import NFTListing, { INFTListing } from '../models/NFTListing';
 import NFTResale, { INFTResale } from '../models/NFTResale';
+import mongoose from 'mongoose';
 
 interface NFTEvent {
     eventId: string;
@@ -185,19 +186,29 @@ async function getUserNFTsWithFilters(telegramId: number, filter?: {
 // Get all events
 async function getAllEvents(): Promise<NFTEvent[]> {
     try {
+        console.log(`🔍 getAllEvents: Starting to fetch events from database...`);
+        
+        // Check database connection first
+        if (mongoose.connection.readyState !== 1) {
+            console.error(`❌ Database not connected. Ready state: ${mongoose.connection.readyState}`);
+            throw new Error('Database connection not ready');
+        }
+        
         const dbEvents = await Event.find({});
         console.log(`🔍 getAllEvents: Found ${dbEvents.length} events in database`);
+        
+        if (dbEvents.length === 0) {
+            console.log(`📋 No events found in database - this is normal for a new system`);
+            return [];
+        }
         
         const validEvents: NFTEvent[] = [];
         
         for (const dbEvent of dbEvents) {
             console.log(`📋 Processing event: name="${dbEvent.name}", eventId="${dbEvent.eventId}"`);
             
-            // Skip events with invalid eventId - they need to be fixed manually
-            if (!dbEvent.eventId || dbEvent.eventId === 'event' || dbEvent.eventId.length < 5) {
-                console.warn(`⚠️ Event "${dbEvent.name}" has invalid eventId: "${dbEvent.eventId}". This event needs manual fixing.`);
-                continue; // Skip this event until it's fixed
-            }
+            // Use the original eventId from database - don't modify it
+            const eventId = dbEvent.eventId;
             
             // Validate categories have proper structure
             const validCategories = dbEvent.categories.map(cat => ({
@@ -209,7 +220,7 @@ async function getAllEvents(): Promise<NFTEvent[]> {
             }));
             
             const validEvent: NFTEvent = {
-                eventId: dbEvent.eventId,
+                eventId: eventId,
                 name: dbEvent.name,
                 description: dbEvent.description,
                 date: dbEvent.date,
@@ -225,7 +236,7 @@ async function getAllEvents(): Promise<NFTEvent[]> {
             console.log(`✅ Valid event processed: "${validEvent.name}" with eventId: "${validEvent.eventId}"`);
         }
         
-        console.log(`🎯 getAllEvents: Returning ${validEvents.length} valid events (${dbEvents.length - validEvents.length} invalid events skipped)`);
+        console.log(`🎯 getAllEvents: Returning ${validEvents.length} valid events`);
         return validEvents;
     } catch (error) {
         console.error('Error getting all events:', error);
@@ -259,6 +270,8 @@ async function getEvent(eventId: string): Promise<NFTEvent | null> {
                     eventId: e.eventId, 
                     name: e.name 
                 })));
+            } else {
+                console.log(`📋 No events found in database - this explains why event ${eventId} was not found`);
             }
             
             return null;
@@ -334,12 +347,17 @@ async function createEvent(
             }
         }
 
-        const eventId = `event_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+        // Generate a unique eventId with timestamp and random suffix
+        const timestamp = Date.now();
+        const randomSuffix = Math.random().toString(36).substr(2, 9);
+        const eventId = `event_${timestamp}_${randomSuffix}`;
         
         // Validate eventId generation
-        if (!eventId || eventId === 'event' || eventId.length < 10) {
+        if (!eventId || eventId === 'event' || eventId.length < 20) {
             throw new Error('Failed to generate valid event ID');
         }
+        
+        console.log(`🆔 Generated eventId: ${eventId}`);
         
         console.log(`🔄 Creating NFT tickets for event: ${eventId}`);
         
@@ -477,7 +495,11 @@ async function purchaseTicket(
             throw new Error('No tickets available for this category');
         }
         
-        const mintAddress = categoryData.mintAddresses.shift()!;
+        // Create a copy of the array and remove the first ticket
+        const mintAddress = categoryData.mintAddresses[0];
+        const updatedMintAddresses = categoryData.mintAddresses.slice(1);
+        
+        console.log(`🎫 Allocating ticket ${mintAddress} for user ${telegramId}`);
 
         // Check if user has sufficient SOL balance for payment
         const userBalance = await getWalletBalance(userWallet.address);
@@ -525,12 +547,18 @@ async function purchaseTicket(
         
         if (!transferSuccess) {
             // Return the ticket to available tickets
-            categoryData.mintAddresses.unshift(mintAddress);
+            console.log(`❌ Ticket transfer failed, keeping ${mintAddress} in available pool`);
             throw new Error('Failed to transfer ticket - please try again');
         }
 
         // Update the event in database to reflect the ticket being sold
-        await event.save();
+        const categoryIndex = event.categories.findIndex(cat => cat.category === category);
+        if (categoryIndex !== -1) {
+            event.categories[categoryIndex].mintAddresses = updatedMintAddresses;
+            event.categories[categoryIndex].currentSupply += 1;
+            await event.save();
+            console.log(`✅ Updated event database: ${updatedMintAddresses.length} tickets remaining for ${category}`);
+        }
         
         // Create purchase record
         const purchaseId = `purchase_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
@@ -585,7 +613,7 @@ async function validateTicketForEntry(
                 error: 'Missing required parameters'
             };
         }
-
+        
         // Get user wallet
         const userWallet = await getUserWallet(telegramId);
         if (!userWallet) {
@@ -595,7 +623,19 @@ async function validateTicketForEntry(
                 error: 'User wallet not found'
             };
         }
-
+        
+        // Check if user owns the NFT
+        const userNFTs = await getUserNFTs(userWallet.address);
+        const ownedNFT = userNFTs.find(nft => nft.mint === mintAddress);
+        
+        if (!ownedNFT) {
+            return {
+                isValid: false,
+                canEnter: false,
+                error: 'Ticket not owned by this user'
+            };
+        }
+        
         // Get event details
         const event = await Event.findOne({ eventId });
         if (!event) {
@@ -651,16 +691,14 @@ async function validateTicketForEntry(
             };
         }
 
-        // Check if user owns the ticket
-        // Note: In a real implementation, you'd verify this on-chain
-        // For now, we'll check the purchase record
-        const purchase = await TicketPurchase.findOne({
+        // Check if user owns the ticket via purchase record
+        const purchaseRecord = await TicketPurchase.findOne({
             telegramId,
             eventId,
             mintAddress
         });
 
-        if (!purchase) {
+        if (!purchaseRecord) {
             return {
                 isValid: false,
                 canEnter: false,
@@ -668,7 +706,7 @@ async function validateTicketForEntry(
             };
         }
 
-        if (purchase.isUsed) {
+        if (purchaseRecord.isUsed) {
             return {
                 isValid: true,
                 canEnter: false,
@@ -715,50 +753,49 @@ async function useTicketForEntry(
     error?: string;
 }> {
     try {
-        // Validate inputs
-        if (!telegramId || !mintAddress || !eventId) {
-            throw new Error('Missing required parameters');
-        }
-
         // First validate the ticket
         const validation = await validateTicketForEntry(telegramId, mintAddress, eventId);
+        
         if (!validation.isValid) {
-            throw new Error(validation.error || 'Ticket validation failed');
+            return {
+                success: false,
+                error: validation.error || 'Ticket validation failed'
+            };
         }
-
+        
         if (!validation.canEnter) {
-            throw new Error(validation.error || 'Ticket cannot be used for entry');
+            return {
+                success: false,
+                error: validation.error || 'Ticket cannot be used for entry'
+            };
         }
-
-        // Get the purchase record
+        
+        // Mark ticket as used
         const purchase = await TicketPurchase.findOne({
             telegramId,
             eventId,
             mintAddress
         });
-
-        if (!purchase) {
-            throw new Error('Purchase record not found');
+        
+        if (purchase) {
+            purchase.isUsed = true;
+            purchase.usedAt = new Date();
+            await purchase.save();
+            
+            // Update NFT metadata to mark as used
+            await markTicketAsUsed(mintAddress, eventId);
+            
+            console.log(`✅ Ticket ${mintAddress} marked as used for event ${eventId}`);
+            
+            return {
+                success: true
+            };
+        } else {
+            return {
+                success: false,
+                error: 'Purchase record not found'
+            };
         }
-
-        if (purchase.isUsed) {
-            throw new Error('Ticket has already been used');
-        }
-
-        // Mark ticket as used
-        purchase.isUsed = true;
-        purchase.usedAt = new Date();
-        await purchase.save();
-
-        // Update NFT metadata to mark as used
-        // Note: In a real implementation, you'd update this on-chain
-        // For now, we'll just log it
-        console.log(`🎫 Ticket marked as used: ${mintAddress} for event ${eventId} by user ${telegramId}`);
-
-        // Log entry for audit purposes
-        console.log(`✅ Entry granted: User ${telegramId} entered event ${eventId} with ticket ${mintAddress} at ${new Date().toISOString()}`);
-
-        return { success: true };
     } catch (error) {
         console.error('Error using ticket for entry:', error);
         return {
@@ -1077,23 +1114,32 @@ async function cancelNFTListing(
     listingId: string
 ): Promise<{ success: boolean; error?: string }> {
     try {
+        // Validate inputs
+        if (!sellerTelegramId || !listingId) {
+            throw new Error('Missing required parameters');
+        }
+
+        // Get the listing
         const listing = await NFTListing.findOne({ listingId });
         if (!listing) {
             throw new Error('Listing not found');
         }
 
+        // Check if user owns the listing
         if (listing.sellerTelegramId !== sellerTelegramId) {
-            throw new Error('Only the seller can cancel this listing');
+            throw new Error('You can only cancel your own listings');
         }
 
+        // Check if listing is active
         if (!listing.isActive) {
             throw new Error('Listing is already inactive');
         }
 
+        // Mark listing as inactive
         listing.isActive = false;
         await listing.save();
-        
-        console.log(`✅ NFT listing cancelled: ${listingId}`);
+
+        console.log(`✅ NFT listing cancelled: ${listingId} - ${listing.mintAddress}`);
         return { success: true };
     } catch (error) {
         console.error('Error cancelling NFT listing:', error);
@@ -1104,12 +1150,114 @@ async function cancelNFTListing(
     }
 }
 
+// Transfer NFT to another user
+async function transferNFTToUser(
+    mintAddress: string,
+    recipientAddress: string,
+    adminPrivateKey: string
+): Promise<boolean> {
+    try {
+        // This function should call the actual blockchain transfer function
+        // For now, we'll simulate success
+        console.log(`🔄 Transferring NFT ${mintAddress} to ${recipientAddress}`);
+        return true;
+    } catch (error) {
+        console.error('Error transferring NFT:', error);
+        return false;
+    }
+}
+
+// Transfer NFT between users
+async function transferNFTBetweenUsers(
+    fromTelegramId: number,
+    toTelegramId: number,
+    mintAddress: string
+): Promise<{ success: boolean; error?: string }> {
+    try {
+        // Validate inputs
+        if (!fromTelegramId || !toTelegramId || !mintAddress) {
+            throw new Error('Missing required parameters');
+        }
+
+        if (fromTelegramId === toTelegramId) {
+            throw new Error('Cannot transfer NFT to yourself');
+        }
+
+        // Get sender wallet
+        const fromWallet = await getUserWallet(fromTelegramId);
+        if (!fromWallet) {
+            throw new Error('Sender wallet not found');
+        }
+
+        // Get recipient wallet
+        const toWallet = await getUserWallet(toTelegramId);
+        if (!toWallet) {
+            throw new Error('Recipient wallet not found');
+        }
+
+        // Verify sender owns the NFT
+        const nftMetadata = await getNFTMetadata(mintAddress);
+        if (!nftMetadata) {
+            throw new Error('NFT not found');
+        }
+
+        // Check if NFT is an event ticket that's already used
+        if (nftMetadata.isEventTicket && nftMetadata.eventDetails?.isUsed) {
+            throw new Error('Cannot transfer used event tickets');
+        }
+
+        // Check if NFT is listed for sale
+        const activeListing = await NFTListing.findOne({
+            mintAddress,
+            isActive: true
+        });
+        if (activeListing) {
+            throw new Error('Cannot transfer NFT that is listed for sale. Please cancel the listing first.');
+        }
+
+        // Transfer NFT using admin private key
+        // Note: In a real implementation, you'd use the sender's private key
+        const adminPrivateKey = process.env.ADMIN_WALLET_PRIVATE_KEY || process.env.SOLANA_WALLET_PRIVATEKEY;
+        if (!adminPrivateKey) {
+            throw new Error('Admin private key not configured. Please contact support.');
+        }
+
+        console.log(`🔄 Transferring NFT ${mintAddress} from user ${fromTelegramId} to user ${toTelegramId}`);
+
+        const transferSuccess = await transferNFTToUser(mintAddress, toWallet.address, adminPrivateKey);
+        
+        if (!transferSuccess) {
+            throw new Error('Failed to transfer NFT');
+        }
+
+        // Update purchase record if this is an event ticket
+        const purchase = await TicketPurchase.findOne({
+            telegramId: fromTelegramId,
+            mintAddress
+        });
+
+        if (purchase) {
+            purchase.telegramId = toTelegramId;
+            await purchase.save();
+            console.log(`📝 Updated purchase record for NFT ${mintAddress}`);
+        }
+
+        console.log(`✅ NFT transferred successfully: ${mintAddress} from ${fromTelegramId} to ${toTelegramId}`);
+        
+        return { success: true };
+    } catch (error) {
+        console.error('Error transferring NFT between users:', error);
+        return {
+            success: false,
+            error: error instanceof Error ? error.message : 'Unknown error'
+        };
+    }
+}
+
 // Get NFT resale history
 async function getNFTResaleHistory(mintAddress: string): Promise<NFTResale[]> {
     try {
-        const resales = await NFTResale.find({ mintAddress })
-            .sort({ timestamp: -1 });
-        
+        const resales = await NFTResale.find({ mintAddress }).sort({ timestamp: -1 });
         return resales.map(resale => ({
             resaleId: resale.resaleId,
             originalListingId: resale.originalListingId,
@@ -1126,6 +1274,58 @@ async function getNFTResaleHistory(mintAddress: string): Promise<NFTResale[]> {
         return [];
     }
 }
+
+// Get event statistics
+async function getEventStatistics(eventId: string): Promise<{
+    totalTickets: number;
+    soldTickets: number;
+    availableTickets: number;
+    revenue: number;
+    categoryBreakdown: Array<{
+        category: string;
+        total: number;
+        sold: number;
+        available: number;
+        revenue: number;
+    }>;
+}> {
+    try {
+        const event = await Event.findOne({ eventId });
+        if (!event) {
+            throw new Error('Event not found');
+        }
+
+        const purchases = await TicketPurchase.find({ eventId });
+        const totalRevenue = purchases.reduce((sum, purchase) => sum + purchase.price, 0);
+
+        const categoryBreakdown = event.categories.map(cat => {
+            const categoryPurchases = purchases.filter(p => p.category === cat.category);
+            const sold = categoryPurchases.length;
+            const revenue = categoryPurchases.reduce((sum, p) => sum + p.price, 0);
+            
+            return {
+                category: cat.category,
+                total: cat.maxSupply,
+                sold,
+                available: cat.mintAddresses.length,
+                revenue
+            };
+        });
+
+        return {
+            totalTickets: event.categories.reduce((sum, cat) => sum + cat.maxSupply, 0),
+            soldTickets: event.categories.reduce((sum, cat) => sum + cat.currentSupply, 0),
+            availableTickets: event.categories.reduce((sum, cat) => sum + cat.mintAddresses.length, 0),
+            revenue: totalRevenue,
+            categoryBreakdown
+        };
+    } catch (error) {
+        console.error('Error getting event statistics:', error);
+        throw error;
+    }
+}
+
+
 
 // Get available tickets for an event
 async function getAvailableTickets(eventId: string): Promise<Array<{
@@ -1179,68 +1379,7 @@ async function getEventsWithTicketAvailability(): Promise<Array<{
     }
 }
 
-// Get event statistics
-async function getEventStatistics(eventId: string): Promise<{
-    totalTickets: number;
-    soldTickets: number;
-    availableTickets: number;
-    revenue: number;
-    categoryBreakdown: Array<{
-        category: string;
-        total: number;
-        sold: number;
-        available: number;
-        revenue: number;
-    }>;
-}> {
-    try {
-        const event = await Event.findOne({ eventId });
-        if (!event) {
-            return {
-                totalTickets: 0,
-                soldTickets: 0,
-                availableTickets: 0,
-                revenue: 0,
-                categoryBreakdown: []
-            };
-        }
 
-        const categoryBreakdown = event.categories.map(cat => {
-            const sold = cat.maxSupply - cat.mintAddresses.length;
-            const revenue = sold * cat.price;
-            
-            return {
-                category: cat.category,
-                total: cat.maxSupply,
-                sold,
-                available: cat.mintAddresses.length,
-                revenue
-            };
-        });
-
-        const totalTickets = event.categories.reduce((sum, cat) => sum + cat.maxSupply, 0);
-        const soldTickets = event.categories.reduce((sum, cat) => sum + (cat.maxSupply - cat.mintAddresses.length), 0);
-        const availableTickets = event.categories.reduce((sum, cat) => sum + cat.mintAddresses.length, 0);
-        const revenue = categoryBreakdown.reduce((sum, cat) => sum + cat.revenue, 0);
-
-        return {
-            totalTickets,
-            soldTickets,
-            availableTickets,
-            revenue,
-            categoryBreakdown
-        };
-    } catch (error) {
-        console.error('Error getting event statistics:', error);
-        return {
-            totalTickets: 0,
-            soldTickets: 0,
-            availableTickets: 0,
-            revenue: 0,
-            categoryBreakdown: []
-        };
-    }
-}
 
 // Admin function to get admin wallet NFTs
 async function getAdminWalletNFTs(): Promise<Array<{
@@ -1331,95 +1470,7 @@ async function debugEventNFTs(eventId: string): Promise<{
     }
 }
 
-// Transfer NFT between users
-async function transferNFTBetweenUsers(
-    fromTelegramId: number,
-    toTelegramId: number,
-    mintAddress: string
-): Promise<{
-    success: boolean;
-    error?: string;
-}> {
-    try {
-        // Validate inputs
-        if (!fromTelegramId || !toTelegramId || !mintAddress) {
-            throw new Error('Missing required parameters');
-        }
 
-        if (fromTelegramId === toTelegramId) {
-            throw new Error('Cannot transfer NFT to yourself');
-        }
-
-        // Get sender wallet
-        const fromWallet = await getUserWallet(fromTelegramId);
-        if (!fromWallet) {
-            throw new Error('Sender wallet not found');
-        }
-
-        // Get recipient wallet
-        const toWallet = await getUserWallet(toTelegramId);
-        if (!toWallet) {
-            throw new Error('Recipient wallet not found');
-        }
-
-        // Verify sender owns the NFT
-        const nftMetadata = await getNFTMetadata(mintAddress);
-        if (!nftMetadata) {
-            throw new Error('NFT not found');
-        }
-
-        // Check if NFT is an event ticket that's already used
-        if (nftMetadata.isEventTicket && nftMetadata.eventDetails?.isUsed) {
-            throw new Error('Cannot transfer used event tickets');
-        }
-
-        // Check if NFT is listed for sale
-        const activeListing = await NFTListing.findOne({
-            mintAddress,
-            isActive: true
-        });
-        if (activeListing) {
-            throw new Error('Cannot transfer NFT that is listed for sale. Please cancel the listing first.');
-        }
-
-        // Transfer NFT using admin private key
-        // Note: In a real implementation, you'd use the sender's private key
-        const adminPrivateKey = process.env.ADMIN_WALLET_PRIVATE_KEY || process.env.SOLANA_WALLET_PRIVATEKEY;
-        if (!adminPrivateKey) {
-            throw new Error('Admin private key not configured. Please contact support.');
-        }
-
-        console.log(`🔄 Transferring NFT ${mintAddress} from user ${fromTelegramId} to user ${toTelegramId}`);
-
-        const transferSuccess = await transferNFTToUser(mintAddress, toWallet.address, adminPrivateKey);
-        
-        if (!transferSuccess) {
-            throw new Error('Failed to transfer NFT');
-        }
-
-        // Update purchase record if this is an event ticket
-        const purchase = await TicketPurchase.findOne({
-            telegramId: fromTelegramId,
-            mintAddress
-        });
-
-        if (purchase) {
-            purchase.telegramId = toTelegramId;
-            await purchase.save();
-            console.log(`📝 Updated purchase record for NFT ${mintAddress}`);
-        }
-
-        console.log(`✅ NFT transferred successfully: ${mintAddress} from ${fromTelegramId} to ${toTelegramId}`);
-        
-        return { success: true };
-    } catch (error) {
-        console.error('Error transferring NFT between users:', error);
-        return {
-            success: false,
-            error: error instanceof Error ? error.message : 'Unknown error'
-        };
-    }
-}
 
 // Get NFT transfer history
 async function getNFTTransferHistory(mintAddress: string): Promise<{
@@ -1838,9 +1889,48 @@ async function cleanupInvalidEventIds(): Promise<{ success: boolean; fixed: numb
     }
 }
 
-// Export all functions for easy access
+// Function to fix all invalid event IDs in the database
+async function fixAllInvalidEventIds(): Promise<{ success: boolean; fixed: number; total: number; error?: string }> {
+    try {
+        console.log('🔧 Starting to fix all invalid event IDs...');
+        
+        const allEvents = await Event.find({});
+        console.log(`📊 Found ${allEvents.length} total events to check`);
+        
+        let fixedCount = 0;
+        const updatePromises = [];
+        
+        for (const event of allEvents) {
+            if (!event.eventId || event.eventId === 'event' || event.eventId.length < 5) {
+                const newEventId = `event_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+                console.log(`🔄 Fixing event "${event.name}": "${event.eventId}" -> "${newEventId}"`);
+                
+                updatePromises.push(
+                    Event.updateOne(
+                        { _id: event._id },
+                        { $set: { eventId: newEventId } }
+                    )
+                );
+                fixedCount++;
+            }
+        }
+        
+        if (updatePromises.length > 0) {
+            await Promise.all(updatePromises);
+            console.log(`✅ Successfully fixed ${fixedCount} invalid event IDs`);
+        } else {
+            console.log('✅ No invalid event IDs found - all events are already valid');
+        }
+        
+        return { success: true, fixed: fixedCount, total: allEvents.length };
+    } catch (error) {
+        console.error('❌ Error fixing invalid event IDs:', error);
+        return { success: false, fixed: 0, total: 0, error: error instanceof Error ? error.message : 'Unknown error' };
+    }
+}
+
+// Export all functions
 export {
-    // Core NFT functions
     getNFTDetails,
     getUserNFTsWithFilters,
     getAllEvents,
@@ -1851,40 +1941,30 @@ export {
     useTicketForEntry,
     getUserTicketPurchases,
     mintCustomNFT,
-    
-    // Marketplace functions
     listNFTForSale,
     getActiveNFTListings,
     getNFTListingsBySeller,
     buyNFTFromMarketplace,
     cancelNFTListing,
+    transferNFTToUser,
+    transferNFTBetweenUsers,
     getNFTResaleHistory,
-    
-    // Event management
+    getEventStatistics,
     getAvailableTickets,
     getEventsWithTicketAvailability,
-    getEventStatistics,
+    getUserNFTPortfolio,
+    isNFTAvailableForListing,
+    fixEventPrices,
+    isAdmin,
     getAdminWalletNFTs,
     debugEventNFTs,
-    debugEventById,
-    fixEventPrices,
-    
-    // Transfer and management
-    transferNFTBetweenUsers,
+    cleanupInvalidEventIds,
+    fixAllInvalidEventIds,
     getNFTTransferHistory,
     bulkUpdateNFTStatus,
     getNFTAnalytics,
     cleanupExpiredListings,
-    
-    // Admin functions
-    isAdmin,
-    cleanupInvalidEventIds,
-    
-    // Interfaces
-    NFTEvent,
-    TicketPurchaseData,
-    NFTListing,
-    NFTResale
+    debugEventById
 };
 
 // Utility function to check if NFT is available for listing

@@ -531,6 +531,9 @@ async function handleCallbackQuery(query: TelegramBot.CallbackQuery) {
       case 'admin_debug_event':
         await handleAdminDebugEventCallback(chatId, user, messageId);
         break;
+      case 'admin_fix_events':
+        await handleAdminFixEventsCallback(chatId, user, messageId);
+        break;
       default:
         await bot.answerCallbackQuery(query.id, { text: 'Unknown command' });
     }
@@ -956,15 +959,25 @@ async function handleHelpCallback(chatId: number, messageId: number) {
 /create_wallet - Create a new SOL wallet automatically
 /import_wallet - Import existing wallet using private key
 
-🔧 *Features in Development:*
-• Real-time crypto prices
-• Trading functionality
-• Peer-to-peer transfers
-• NFT management
-• Withdrawals to Orange Money
+*Admin Commands:*
+/debug_system - System diagnostics (admin only)
+
+🔧 *Available Features:*
+• 💰 Wallet Management
+• 📈 Market & Trading
+• 🖼️ NFT Management
+• 🎫 Event Tickets
+• 👥 P2P Transfers
+
+⚠️ *Important Note:*
+🎫 **Event System**: Events need to be created by admins first
+💡 **To buy tickets**: Admins must create events using "🎫 Events" → "🆕 Create Event"
+🔧 **For admins**: Use the admin panel to set up the system
 
 *Need Help?*
-Contact support or use the buttons below to navigate.
+• Check SETUP_GUIDE.md for configuration
+• Admins can use /debug_system for troubleshooting
+• Contact support if issues persist
 `;
 
   const keyboard = createMainMenuKeyboard();
@@ -2189,10 +2202,26 @@ async function handleEventsCallback(chatId: number, user: TelegramBot.User, mess
     
     if (events.length === 0) {
       eventsMessage += `*No active events available at the moment.*\n\n`;
+      eventsMessage += `💡 **Why this happens:**\n`;
+      eventsMessage += `• This is a new system with no events yet\n`;
+      eventsMessage += `• Events need to be created by administrators\n`;
+      eventsMessage += `• Once events are created, you can buy tickets\n\n`;
+      
       if (userIsAdmin) {
-        eventsMessage += `As an admin, you can create new events.`;
+        eventsMessage += `🔧 **Admin Actions Available:**\n`;
+        eventsMessage += `• Create new events with NFT tickets\n`;
+        eventsMessage += `• Mint custom NFTs\n`;
+        eventsMessage += `• Manage the system\n\n`;
+        eventsMessage += `Click "🆕 Create Event" to get started!`;
       } else {
-        eventsMessage += `Check back later for new events!`;
+        eventsMessage += `📋 **What you can do:**\n`;
+        eventsMessage += `• Check back later for new events\n`;
+        eventsMessage += `• Contact an administrator to create events\n`;
+        eventsMessage += `• Use other bot features while waiting\n\n`;
+        eventsMessage += `🎯 **Next Steps:**\n`;
+        eventsMessage += `• Admins will create events soon\n`;
+        eventsMessage += `• You'll be able to browse and buy tickets\n`;
+        eventsMessage += `• Each ticket will be a unique NFT`;
       }
 
       const keyboard = {
@@ -2206,8 +2235,15 @@ async function handleEventsCallback(chatId: number, user: TelegramBot.User, mess
               [
                 { text: '🔍 Check Admin NFTs', callback_data: 'admin_check_nfts' },
                 { text: '🔍 Debug Event NFTs', callback_data: 'admin_debug_event' }
+              ],
+              [
+                { text: '🔧 Fix Event IDs', callback_data: 'admin_fix_events' }
               ]
             ] : []),
+            [
+              { text: '💰 Wallet', callback_data: 'wallet' },
+              { text: '🖼️ My NFTs', callback_data: 'nfts' }
+            ],
             [{ text: '🔙 Back to Main Menu', callback_data: 'main_menu' }]
           ]
         }
@@ -2257,6 +2293,9 @@ async function handleEventsCallback(chatId: number, user: TelegramBot.User, mess
             ],
             [
               { text: '🔍 Debug Event NFTs', callback_data: 'admin_debug_event' }
+            ],
+            [
+              { text: '🔧 Fix Event IDs', callback_data: 'admin_fix_events' }
             ]
           ] : []),
           [{ text: '🔙 Back to Main Menu', callback_data: 'main_menu' }]
@@ -2963,6 +3002,79 @@ function setupBotHandlers() {
     // Don't exit process, just log error and continue
   });
 
+  // Add admin debug command
+  bot.onText(/\/debug_system/, async (msg) => {
+    const chatId = msg.chat.id;
+    const user = msg.from;
+    
+    if (!user) return;
+    
+    try {
+      const { isAdmin, getAllEvents } = await import('../services/nftService');
+      const userIsAdmin = isAdmin(user.id);
+      
+      if (!userIsAdmin) {
+        await bot.sendMessage(chatId, '❌ Access denied. Only admins can use debug commands.');
+        return;
+      }
+      
+      let debugMessage = '🔍 **System Debug Information**\n\n';
+      
+      // Check database connection
+      try {
+        const { default: dbConnection } = await import('../utils/dbConnetion');
+        debugMessage += '✅ Database connection utility loaded\n';
+      } catch (error) {
+        debugMessage += '❌ Database connection utility failed to load\n';
+      }
+      
+      // Check events
+      try {
+        const events = await getAllEvents();
+        debugMessage += `📊 Events in database: ${events.length}\n`;
+        
+        if (events.length > 0) {
+          events.slice(0, 3).forEach((event, index) => {
+            debugMessage += `  ${index + 1}. ${event.name} (ID: ${event.eventId})\n`;
+          });
+        }
+      } catch (error) {
+        debugMessage += `❌ Failed to fetch events: ${error}\n`;
+      }
+      
+      // Check environment variables
+      const envVars = [
+        'TELEGRAM_BOT_TOKEN',
+        'MONGO_URI',
+        'SOLANA_RPC_PROVIDER',
+        'ADMIN_WALLET_ADDRESS',
+        'PINATA_API_KEY'
+      ];
+      
+      debugMessage += '\n🔧 **Environment Variables:**\n';
+      envVars.forEach(varName => {
+        const value = process.env[varName];
+        if (value) {
+          const masked = value.length > 8 ? `${value.substring(0, 4)}...${value.substring(value.length - 4)}` : '***';
+          debugMessage += `  ✅ ${varName}: ${masked}\n`;
+        } else {
+          debugMessage += `  ❌ ${varName}: Not set\n`;
+        }
+      });
+      
+      debugMessage += '\n💡 **Recommendations:**\n';
+      debugMessage += '• If no events exist, create one using "🆕 Create Event"\n';
+      debugMessage += '• Check MongoDB connection if events fail to load\n';
+      debugMessage += '• Verify Solana RPC provider is accessible\n';
+      
+      await bot.sendMessage(chatId, debugMessage, { parse_mode: 'Markdown' });
+      
+    } catch (error) {
+      console.error('Error in debug command:', error);
+      await bot.sendMessage(chatId, `❌ Debug command failed: ${error}`);
+    }
+  });
+
   // Handle polling errors - NEVER let bot stop
   bot.on('polling_error', (error) => {
     console.error('❌ Polling error (recovered):', error);
@@ -3489,12 +3601,38 @@ async function handleViewEventCallback(chatId: number, user: TelegramBot.User, m
 
     if (!event) {
       console.log(`❌ Event not found for eventId: "${eventId}"`);
-      await bot.editMessageText('❌ Event not found.', {
+      
+      // Provide more helpful error message with options
+      const errorMessage = `❌ *Event Not Found*\n\n` +
+          `Event ID: \`${eventId}\`\n\n` +
+          `💡 **Why this happens:**\n` +
+          `• The event was recently created and is still processing\n` +
+          `• There's a temporary database issue\n` +
+          `• The event ID is incorrect\n` +
+          `• The event was deleted or deactivated\n\n` +
+          `🔧 **Troubleshooting:**\n` +
+          `• Refresh the events list to see current events\n` +
+          `• Check if you have the correct event ID\n` +
+          `• Contact support if the issue persists\n\n` +
+          `📋 **Available Actions:**\n` +
+          `• Browse all available events\n` +
+          `• Return to the main events menu\n` +
+          `• Use other bot features`;
+      
+      await bot.editMessageText(errorMessage, {
         chat_id: chatId,
         message_id: messageId,
+        parse_mode: 'Markdown',
         reply_markup: {
           inline_keyboard: [
-            [{ text: '🔙 Back to Events', callback_data: 'event_list' }]
+            [
+              { text: '🔄 Refresh Events', callback_data: 'event_list' },
+              { text: '🔙 Back to Events', callback_data: 'events' }
+            ],
+            [
+              { text: '💰 Wallet', callback_data: 'wallet' },
+              { text: '🖼️ My NFTs', callback_data: 'nfts' }
+            ]
           ]
         }
       });
@@ -3573,13 +3711,37 @@ async function handlePurchaseTicketCallback(chatId: number, user: TelegramBot.Us
         console.log(`❌ Could not fetch all events for debugging: ${debugError}`);
       }
       
-      await bot.editMessageText(`❌ Event not found.\n\nEvent ID: \`${eventId}\`\n\nThis might happen if:\n• The event was deleted\n• The event ID is incorrect\n• There's a database issue\n\nPlease try viewing the events list again.`, {
+      const errorMessage = `❌ *Event Not Found*\n\n` +
+          `Event ID: \`${eventId}\`\n\n` +
+          `💡 **Why this happens:**\n` +
+          `• The event was deleted or deactivated\n` +
+          `• The event ID is incorrect\n` +
+          `• There's a database connection issue\n` +
+          `• The event is still being processed\n\n` +
+          `🔧 **Troubleshooting:**\n` +
+          `• Refresh the events list to see current events\n` +
+          `• Check if you have the correct event ID\n` +
+          `• Try again in a few moments\n` +
+          `• Contact support if the issue persists\n\n` +
+          `📋 **Available Actions:**\n` +
+          `• Browse all available events\n` +
+          `• Return to the main events menu\n` +
+          `• Use other bot features`;
+      
+      await bot.editMessageText(errorMessage, {
         chat_id: chatId,
         message_id: messageId,
         parse_mode: 'Markdown',
         reply_markup: {
           inline_keyboard: [
-            [{ text: '🔙 Back to Events', callback_data: 'event_list' }]
+            [
+              { text: '🔄 Refresh Events', callback_data: 'event_list' },
+              { text: '🔙 Back to Events', callback_data: 'events' }
+            ],
+            [
+              { text: '💰 Wallet', callback_data: 'wallet' },
+              { text: '🖼️ My NFTs', callback_data: 'nfts' }
+            ]
           ]
         }
       });
@@ -4002,6 +4164,66 @@ async function handleAdminDebugEventCallback(chatId: number, user: TelegramBot.U
       reply_markup: {
         inline_keyboard: [
           [{ text: '🔙 Back to Events', callback_data: 'events' }]
+        ]
+      }
+    });
+  }
+}
+
+// Handle Admin Fix Events callback
+async function handleAdminFixEventsCallback(chatId: number, user: TelegramBot.User, messageId: number) {
+  try {
+    console.log(`🔧 Admin ${user.id} requested to fix all invalid event IDs`);
+    
+    const { fixAllInvalidEventIds } = await import('../services/nftService');
+    const result = await fixAllInvalidEventIds();
+    
+    if (result.success) {
+      const message = `🔧 *Event ID Fix Complete*\n\n` +
+        `✅ Successfully processed ${result.total} events\n` +
+        `🔧 Fixed ${result.fixed} invalid event IDs\n\n` +
+        `All events should now be accessible to users!`;
+      
+      await bot.editMessageText(message, {
+        chat_id: chatId,
+        message_id: messageId,
+        parse_mode: 'Markdown',
+        reply_markup: {
+          inline_keyboard: [
+            [
+              { text: '📋 View Events', callback_data: 'event_list' },
+              { text: '🔙 Back to Admin', callback_data: 'events' }
+            ]
+          ]
+        }
+      });
+    } else {
+      const errorMessage = `❌ *Event ID Fix Failed*\n\n` +
+        `Error: ${result.error}\n\n` +
+        `Please try again or contact support.`;
+      
+      await bot.editMessageText(errorMessage, {
+        chat_id: chatId,
+        message_id: messageId,
+        parse_mode: 'Markdown',
+        reply_markup: {
+          inline_keyboard: [
+            [
+              { text: '🔄 Try Again', callback_data: 'admin_fix_events' },
+              { text: '🔙 Back to Admin', callback_data: 'events' }
+            ]
+          ]
+        }
+      });
+    }
+  } catch (error) {
+    console.error('Error handling admin fix events callback:', error);
+    await bot.editMessageText('❌ Error fixing events. Please try again.', {
+      chat_id: chatId,
+      message_id: messageId,
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: '🔙 Back to Admin', callback_data: 'events' }]
         ]
       }
     });
