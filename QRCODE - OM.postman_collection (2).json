@@ -529,11 +529,15 @@
 							"});",
 							""
 						],
-						"type": "text/javascript"
+						"type": "text/javascript",
+						"packages": {}
 					}
 				}
 			],
 			"request": {
+				"auth": {
+					"type": "noauth"
+				},
 				"method": "POST",
 				"header": [
 					{
@@ -559,12 +563,12 @@
 						},
 						{
 							"key": "client_secret",
-							"value": "",
+							"value": "1afdf8bc-b37b-43b5-b4cb-56feb7284e50",
 							"type": "text"
 						},
 						{
 							"key": "client_id",
-							"value": "",
+							"value": "113c6c71-74a9-49be-aa5b-3eb840b45b27",
 							"type": "text"
 						}
 					]

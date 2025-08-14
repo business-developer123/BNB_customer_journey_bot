@@ -1,0 +1,26 @@
+[
+    {
+        "msisdn": "771899696",
+        "pinCode": "2021",
+        "merchantCode": "",
+        "type": "RETAILER",
+        "grade": null,
+        "expiresAt": "2025-08-14T21:55:48.647Z"
+    },
+    {
+        "msisdn": "786175700",
+        "pinCode": "2021",
+        "merchantCode": "",
+        "type": "CUSTOMER",
+        "grade": "LITE",
+        "expiresAt": "2025-08-14T21:55:48.647Z"
+    },
+    {
+        "msisdn": "771899231",
+        "pinCode": "2021",
+        "merchantCode": "485421",
+        "type": "MERCHANT",
+        "grade": null,
+        "expiresAt": "2025-08-14T21:55:48.647Z"
+    }
+]

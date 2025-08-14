@@ -8,6 +8,14 @@ const botToken = process.env.TELEGRAM_BOT_TOKEN;
 
 const bot = new TelegramBot(botToken as string, { polling: true });
 
+// Helper function to truncate long addresses for display
+function truncateAddress(address: string, startLength: number = 4, endLength: number = 4): string {
+  if (!address || address.length <= startLength + endLength + 3) {
+    return address;
+  }
+  return `${address.substring(0, startLength)}...${address.substring(address.length - endLength)}`;
+}
+
 // Helper function to determine network and get network info
 function getNetworkInfo() {
   const solanaRpcProvider = process.env.SOLANA_RPC_PROVIDER;
@@ -136,7 +144,7 @@ async function handleStart(msg: TelegramBot.Message) {
         if (walletInfo) {
           walletStatus = `
 💰 *Wallet Status:* Active
-📍 *Address:* \`${walletInfo.address}\`
+📍 *Address:* \`${truncateAddress(walletInfo.address)}\`
 🔐 *Type:* ${walletInfo.isCustom ? 'Custom Wallet' : 'Auto-generated'}
 💎 *SOL Balance:* ${parseFloat(walletInfo.balance).toFixed(6)} SOL
 `;
@@ -152,7 +160,7 @@ async function handleStart(msg: TelegramBot.Message) {
       }
 
       const { networkInfo } = getNetworkInfo();
-      
+
       const welcomeBackMessage = `
 🎉 *Welcome back to Crypto Trading Bot!*
 
@@ -186,7 +194,7 @@ ${walletStatus}
       });
 
       const { networkInfo } = getNetworkInfo();
-      
+
       const welcomeMessage = `
 🎉 *Welcome to Crypto Trading Bot!*
 
@@ -355,12 +363,12 @@ async function handleCallbackQuery(query: TelegramBot.CallbackQuery) {
         userStates[user.id].data.inputSymbol = inp;
         userStates[user.id].data.outputSymbol = outp;
         userStates[user.id].data.side = 'buy';
-        
+
         const confirmText = `Please confirm trade amount: ${amount}`;
         await bot.editMessageText(confirmText, {
           chat_id: chatId,
           message_id: messageId,
-          reply_markup: { inline_keyboard: [[{ text: '✅ Confirm', callback_data: `market_confirm_${amount}` } , { text: '❌ Cancel', callback_data: 'market' }]] }
+          reply_markup: { inline_keyboard: [[{ text: '✅ Confirm', callback_data: `market_confirm_${amount}` }, { text: '❌ Cancel', callback_data: 'market' }]] }
         });
       }
       return;
@@ -379,12 +387,12 @@ async function handleCallbackQuery(query: TelegramBot.CallbackQuery) {
         userStates[user.id].data.inputSymbol = inp;
         userStates[user.id].data.outputSymbol = outp;
         userStates[user.id].data.side = 'sell';
-        
+
         const confirmText = `Please confirm trade amount: ${amount}`;
         await bot.editMessageText(confirmText, {
           chat_id: chatId,
           message_id: messageId,
-          reply_markup: { inline_keyboard: [[{ text: '✅ Confirm', callback_data: `market_confirm_${amount}` } , { text: '❌ Cancel', callback_data: 'market' }]] }
+          reply_markup: { inline_keyboard: [[{ text: '✅ Confirm', callback_data: `market_confirm_${amount}` }, { text: '❌ Cancel', callback_data: 'market' }]] }
         });
       }
       return;
@@ -457,7 +465,7 @@ async function handleCallbackQuery(query: TelegramBot.CallbackQuery) {
     }
     // Always ack callback quickly to avoid Telegram 400 (query timeout)
     await bot.answerCallbackQuery(query.id);
-    
+
     switch (data) {
       case 'wallet':
         await handleWalletCallback(chatId, user, messageId);
@@ -608,12 +616,12 @@ async function handleMarketQuote(chatId: number, user: TelegramBot.User, message
     const keyboard = {
       reply_markup: {
         inline_keyboard: [
-          [ { text: '🔁 Refresh Quote', callback_data: `market_pair_${inputSymbol}-${outputSymbol}` } ],
-          [ { text: '✏️ Amount', callback_data: `market_amount_${inputSymbol}-${outputSymbol}` }, { text: '⚙️ Slippage', callback_data: `market_slip_custom_${inputSymbol}-${outputSymbol}` } ],
-          [ { text: '0.5%', callback_data: `market_slippage_50_${inputSymbol}-${outputSymbol}` }, { text: '1%', callback_data: `market_slippage_100_${inputSymbol}-${outputSymbol}` }, { text: '2%', callback_data: `market_slippage_200_${inputSymbol}-${outputSymbol}` } ],
-          [ { text: `🟢 Buy ${outputSymbol} with ${inputSymbol}`, callback_data: `market_buy_${inputSymbol}-${outputSymbol}` } ],
-          [ { text: `🔴 Sell ${outputSymbol} for ${inputSymbol}`, callback_data: `market_sell_${outputSymbol}-${inputSymbol}` } ],
-          [ { text: '🔙 Back', callback_data: 'market' } ]
+          [{ text: '🔁 Refresh Quote', callback_data: `market_pair_${inputSymbol}-${outputSymbol}` }],
+          [{ text: '✏️ Amount', callback_data: `market_amount_${inputSymbol}-${outputSymbol}` }, { text: '⚙️ Slippage', callback_data: `market_slip_custom_${inputSymbol}-${outputSymbol}` }],
+          [{ text: '0.5%', callback_data: `market_slippage_50_${inputSymbol}-${outputSymbol}` }, { text: '1%', callback_data: `market_slippage_100_${inputSymbol}-${outputSymbol}` }, { text: '2%', callback_data: `market_slippage_200_${inputSymbol}-${outputSymbol}` }],
+          [{ text: `🟢 Buy ${outputSymbol} with ${inputSymbol}`, callback_data: `market_buy_${inputSymbol}-${outputSymbol}` }],
+          [{ text: `🔴 Sell ${outputSymbol} for ${inputSymbol}`, callback_data: `market_sell_${outputSymbol}-${inputSymbol}` }],
+          [{ text: '🔙 Back', callback_data: 'market' }]
         ]
       }
     };
@@ -660,28 +668,28 @@ async function handleMarketConfirm(chatId: number, user: TelegramBot.User, messa
     const net = getNetworkFromEnv();
     const inSym = resolveMintSymbol(inputSymbol);
     const outSym = resolveMintSymbol(outputSymbol);
-    
+
     if (!inSym || !outSym) {
       await bot.editMessageText(
         `❌ Unsupported trading pair: ${inputSymbol} → ${outputSymbol}\n\n` +
-        `Supported tokens: SOL, USDC, USDT`, 
+        `Supported tokens: SOL, USDC, USDT`,
         { chat_id: chatId, message_id: messageId }
       );
       return;
     }
-    
+
     const inMint = COMMON_MINTS[net][inSym];
     const outMint = COMMON_MINTS[net][outSym];
-    
+
     if (!inMint || !outMint) {
       await bot.editMessageText(
         `❌ Missing mint addresses for ${inputSymbol} → ${outputSymbol} on ${net}\n\n` +
-        `Please try again or contact support.`, 
+        `Please try again or contact support.`,
         { chat_id: chatId, message_id: messageId }
       );
       return;
     }
-    
+
     const decimals = inputSymbol === 'SOL' ? 9 : 6;
     const humanAmount = typeof quoteAmount === 'number' && quoteAmount > 0 ? quoteAmount : amount;
     const amountAtomic = BigInt(Math.floor(humanAmount * Math.pow(10, decimals))).toString();
@@ -702,16 +710,16 @@ async function handleMarketConfirm(chatId: number, user: TelegramBot.User, messa
     const { getWalletBalance, getAllTokensInfoOfUserWallet } = await import('../utils/blockchainUtils');
     const solBalanceStr = await getWalletBalance(wallet.address);
     const solLamports = Math.floor(parseFloat(solBalanceStr) * 1e9);
-    
+
     // Calculate required lamports based on input token
     let requiredLamports = 5_000_000; // Base fee buffer (0.005 SOL for fees + account creation)
-    
+
     if (inputSymbol === 'SOL') {
       // If swapping SOL, need swap amount + fees
       const swapAmountLamports = BigInt(amountAtomic);
       requiredLamports += Number(swapAmountLamports);
     }
-    
+
     if (solLamports < requiredLamports) {
       const requiredSOL = (requiredLamports / 1e9).toFixed(4);
       const currentSOL = (solLamports / 1e9).toFixed(4);
@@ -719,7 +727,7 @@ async function handleMarketConfirm(chatId: number, user: TelegramBot.User, messa
         `❌ Insufficient SOL balance!\n\n` +
         `Current: ${currentSOL} SOL\n` +
         `Required: ${requiredSOL} SOL\n\n` +
-        `Please add more SOL to your wallet.`, 
+        `Please add more SOL to your wallet.`,
         { chat_id: chatId, message_id: messageId }
       );
       return;
@@ -729,23 +737,23 @@ async function handleMarketConfirm(chatId: number, user: TelegramBot.User, messa
     if (inputSymbol !== 'SOL') {
       try {
         const tokenBalances = await getAllTokensInfoOfUserWallet(wallet.address);
-        const inputToken = tokenBalances.find(token => 
-          token.symbol.toLowerCase() === inputSymbol.toLowerCase() ||
+        const inputToken = tokenBalances.find(token =>
+          token.token_address.toLowerCase() === inputSymbol.toLowerCase() ||
           token.token_address === inMint
         );
-        
+
         if (!inputToken) {
-          await bot.editMessageText(`❌ You don't have any ${inputSymbol} tokens in your wallet.`, 
+          await bot.editMessageText(`❌ You don't have any ${inputSymbol} tokens in your wallet.`,
             { chat_id: chatId, message_id: messageId });
           return;
         }
-        
+
         const availableBalance = parseFloat(inputToken.balance);
         if (availableBalance < humanAmount) {
           await bot.editMessageText(
             `❌ Insufficient ${inputSymbol} balance!\n\n` +
             `Available: ${availableBalance} ${inputSymbol}\n` +
-            `Required: ${humanAmount} ${inputSymbol}`, 
+            `Required: ${humanAmount} ${inputSymbol}`,
             { chat_id: chatId, message_id: messageId }
           );
           return;
@@ -757,7 +765,7 @@ async function handleMarketConfirm(chatId: number, user: TelegramBot.User, messa
 
     // Create swap transaction
     const serialized = await createSwapTransaction(quote, wallet.address);
-    const sig = await signAndSendSwapTransaction(serialized , pk);
+    const sig = await signAndSendSwapTransaction(serialized, pk);
     // Success UI
     const { getSolanaNetworkInfo, getSolscanLink } = await import('../utils/blockchainUtils');
     const { explorerName } = getSolanaNetworkInfo();
@@ -773,7 +781,7 @@ async function handleMarketConfirm(chatId: number, user: TelegramBot.User, messa
     delete userStates[user.id].data;
   } catch (e) {
     console.error('Trade error', e);
-    
+
     // Show specific error message if available
     let errorMessage = '❌ Trade failed. Please try again later.';
     if (e instanceof Error) {
@@ -785,11 +793,11 @@ async function handleMarketConfirm(chatId: number, user: TelegramBot.User, messa
         errorMessage = '❌ Price moved too much during swap. Try increasing slippage tolerance.';
       }
     }
-    
-    await bot.editMessageText(errorMessage, { 
-      chat_id: chatId, 
-      message_id: messageId, 
-      reply_markup: createMarketMenuKeyboard().reply_markup 
+
+    await bot.editMessageText(errorMessage, {
+      chat_id: chatId,
+      message_id: messageId,
+      reply_markup: createMarketMenuKeyboard().reply_markup
     });
   }
 }
@@ -813,11 +821,11 @@ async function handleWalletCallback(chatId: number, user: TelegramBot.User, mess
 
     if (walletInfo) {
       const { networkInfo } = getNetworkInfo();
-      
+
       let walletMessage = `
 💰 *Your Wallet Information*
 
-📍 *Address:* \`${walletInfo.address}\`
+📍 *Address:* \`${truncateAddress(walletInfo.address)}\`
 🔐 *Type:* ${walletInfo.isCustom ? 'Custom Wallet' : 'Auto-generated'}
 🌐 *Network:* ${networkInfo}
 
@@ -883,7 +891,7 @@ async function handleCreateWalletCallback(chatId: number, user: TelegramBot.User
     const successMessage = `
 🎉 *Wallet Created Successfully!*
 
-📍 *Address:* \`${wallet.address}\`
+📍 *Address:* \`${truncateAddress(wallet.address)}\`
 🔐 *Type:* Auto-generated
 💰 *Balance:* 0 SOL
 
@@ -1031,11 +1039,11 @@ Welcome to your crypto trading dashboard!
 async function handleTokensCallback(chatId: number, user: TelegramBot.User, messageId: number, page = 1) {
   try {
     console.log(`🔄 Handling tokens callback for user ${user.id}, page ${page}`);
-    
+
     // Check cache
     if (!userStates[user.id]) userStates[user.id] = { state: '' };
     let tokens = userStates[user.id].tokens;
-    
+
     if (!tokens) {
       console.log(`📥 No cached tokens found for user ${user.id}, fetching from blockchain...`);
       await bot.editMessageText('🔄 *Loading token info...*\n\nPlease wait while we fetch your token information...', {
@@ -1047,7 +1055,7 @@ async function handleTokensCallback(chatId: number, user: TelegramBot.User, mess
       if (!walletInfo || !walletInfo.tokens || walletInfo.tokens.length === 0) {
         console.log(`❌ No tokens found for user ${user.id}`);
         let tokensMessage = `\n🪙 *All Token Balances*\n\n`;
-        tokensMessage += `📍 *Wallet Address:* \`${walletInfo ? walletInfo.address : ''}\`\n`;
+        tokensMessage += `📍 *Wallet Address:* \`${walletInfo && walletInfo.address ? truncateAddress(walletInfo.address) : ''}\`\n`;
         tokensMessage += `🔐 *Wallet Type:* ${walletInfo ? (walletInfo.isCustom ? 'Custom Wallet' : 'Auto-generated') : ''}\n`;
         tokensMessage += `\n*Token Balances:* No tokens found in this wallet\n\n*Note:* Only common Solana tokens are checked. Your wallet may have other tokens not shown here.`;
         const keyboard = createWalletMenuKeyboard();
@@ -1074,49 +1082,49 @@ async function handleTokensCallback(chatId: number, user: TelegramBot.User, mess
     let currentPage = page;
     if (currentPage < 1) currentPage = 1;
     if (currentPage > totalPages) currentPage = totalPages;
-    
+
     userStates[user.id].lastTokenPage = currentPage;
-    
+
     const startIndex = (currentPage - 1) * tokensPerPage;
     const endIndex = Math.min(startIndex + tokensPerPage, tokens.length);
     const pageTokens = tokens.slice(startIndex, endIndex);
-    
+
     console.log(`📄 Pagination: Page ${currentPage}/${totalPages}, showing token ${startIndex + 1} of ${tokens.length}`);
-    console.log(`🎯 Current token: ${pageTokens[0]?.symbol} (${pageTokens[0]?.name})`);
-    
+    console.log(`🎯 Current token: ${pageTokens[0]?.name} (${pageTokens[0]?.token_address ? truncateAddress(pageTokens[0].token_address) : 'N/A'})`);
+
     const { networkInfo } = getNetworkInfo();
-    
+
     let tokensMessage = `\n🪙 *Token Information*\n\n`;
-    tokensMessage += `📍 *Wallet Address:* \`${userStates[user.id].walletAddress}\`\n`;
+    tokensMessage += `📍 *Wallet Address:* \`${userStates[user.id].walletAddress || ""}\`\n`;
     tokensMessage += `🔐 *Wallet Type:* ${userStates[user.id].isCustom ? 'Custom Wallet' : 'Auto-generated'}\n`;
     tokensMessage += `🌐 *Network:* ${networkInfo}\n`;
     tokensMessage += `\n*Token ${currentPage} of ${totalPages}*\n\n`;
 
     // Display single token with detailed information
     const token = pageTokens[0];
-    tokensMessage += `🪙 *${token.symbol} (${token.name})*\n`;
-    tokensMessage += `📍 *Token Address:* \`${token.token_address}\`\n`;
-    tokensMessage += `💰 *Balance:* ${token.balance} ${token.symbol}\n`;
+            tokensMessage += `🪙 *${truncateAddress(token.token_address)}*\n`;
+    tokensMessage += `📍 *Token Address:* \`${token.token_address ? truncateAddress(token.token_address) : 'N/A'}\`\n`;
+    tokensMessage += `💰 *Balance:* ${token.balance} \n`;
     tokensMessage += `🔢 *Decimals:* ${token.decimals || 'N/A'}\n`;
     tokensMessage += `💵 *Price:* $${token.price ? parseFloat(token.price).toFixed(6) : 'N/A'}\n`;
-    
+
     // Pagination keyboard with improved layout
     const buttons = [];
     const navigationRow = [];
-    
+
     if (currentPage > 1) {
       navigationRow.push({ text: '⬅️ Prev', callback_data: `tokens_page_${currentPage - 1}` });
     }
     if (currentPage < totalPages) {
       navigationRow.push({ text: 'Next ➡️', callback_data: `tokens_page_${currentPage + 1}` });
     }
-    
+
     if (navigationRow.length > 0) {
       buttons.push(navigationRow);
     }
-    
+
     buttons.push([{ text: '🔙 Back to Wallet', callback_data: 'wallet' }]);
-    
+
     const keyboard = {
       reply_markup: {
         inline_keyboard: buttons
@@ -1145,7 +1153,7 @@ async function handleTokensCallback(chatId: number, user: TelegramBot.User, mess
 async function handleRefreshTokensCallback(chatId: number, user: TelegramBot.User, messageId: number) {
   try {
     console.log(`🔄 Refreshing tokens for user ${user.id}`);
-    
+
     // Clear cached token data to force fresh fetch
     if (userStates[user.id]) {
       delete userStates[user.id].tokens;
@@ -1153,7 +1161,7 @@ async function handleRefreshTokensCallback(chatId: number, user: TelegramBot.Use
       delete userStates[user.id].isCustom;
       delete userStates[user.id].lastTokenPage;
     }
-    
+
     // Fetch fresh token data and show first page
     await handleTokensCallback(chatId, user, messageId, 1);
   } catch (error) {
@@ -1198,9 +1206,9 @@ async function handleP2PTransferCallback(chatId: number, user: TelegramBot.User,
     userStates[user.id].state = 'p2p_entering_recipient';
 
     const { networkInfo } = getNetworkInfo();
-    
+
     let p2pMessage = `👥 *P2P Transfer*\n\n`;
-    p2pMessage += `📍 *Your Wallet:* \`${walletInfo.address}\`\n`;
+    p2pMessage += `📍 *Your Wallet:* \`${truncateAddress(walletInfo.address)}\`\n`;
     p2pMessage += `🌐 *Network:* ${networkInfo}\n\n`;
     p2pMessage += `*Enter recipient identifier:*\n`;
     p2pMessage += `• Telegram ID (e.g., your Telegram ID)\n`;
@@ -1259,22 +1267,22 @@ async function handleTransferTokenCallback(chatId: number, user: TelegramBot.Use
     userStates[user.id].state = 'selecting_token_for_transfer';
 
     const { networkInfo } = getNetworkInfo();
-    
+
     let transferMessage = `💸 *Transfer Token*\n\n`;
-    transferMessage += `📍 *Your Wallet:* \`${walletInfo.address}\`\n`;
+    transferMessage += `📍 *Your Wallet:* \`${truncateAddress(walletInfo.address)}\`\n`;
     transferMessage += `🌐 *Network:* ${networkInfo}\n\n`;
     transferMessage += `*Select a token to transfer:*\n\n`;
 
     walletInfo.tokens.forEach((token, index) => {
-      transferMessage += `${index + 1}. **${token.symbol}** (${token.name})\n`;
-      transferMessage += `   💰 Balance: ${token.balance} ${token.symbol}\n\n`;
+      transferMessage += `${index + 1}. ${truncateAddress(token.token_address)}\n`;
+      transferMessage += `   💰 Balance: ${token.balance} \n\n`;
     });
 
     const keyboard = {
       reply_markup: {
         inline_keyboard: [
           ...walletInfo.tokens.map((_, index) => [{
-            text: `${index + 1}. ${walletInfo.tokens[index].symbol}`,
+            text: `${index + 1}. ${truncateAddress(walletInfo.tokens[index].token_address)}`,
             callback_data: `select_token_${index}`
           }]),
           [{ text: '🔙 Back', callback_data: 'wallet' }]
@@ -1314,14 +1322,10 @@ async function handleTokenSelectionCallback(chatId: number, user: TelegramBot.Us
     userStates[user.id].selectedToken = selectedToken;
     userStates[user.id].state = 'entering_recipient_address';
 
-    let transferMessage = `💸 *Transfer ${selectedToken.symbol}*
-
-`;
-    transferMessage += `*Selected Token:* ${selectedToken.name} (${selectedToken.symbol})
-`;
-    transferMessage += `*Your Balance:* ${selectedToken.balance} ${selectedToken.symbol}\n\n`;
-    transferMessage += `*Please enter the recipient wallet address:*
-`;
+    let transferMessage = `💸 *Transfer ${truncateAddress(selectedToken.token_address)}*\n\n`;
+    transferMessage += `*Selected Token:* ${truncateAddress(selectedToken.token_address)}\n\n`;
+    transferMessage += `*Your Balance:* ${selectedToken.balance} \n\n`;
+    transferMessage += `*Please enter the recipient wallet address:*\n`;
     transferMessage += `(Send the address as a text message)`;
 
     const keyboard = {
@@ -1369,7 +1373,7 @@ async function handleP2PRecipientInput(msg: TelegramBot.Message) {
 
     // Import P2P validation function
     const { validateP2PRecipient } = await import('../services/userService');
-    
+
     // Show validation message
     const processingMsg = await bot.sendMessage(chatId, '🔄 *Validating recipient...*', {
       parse_mode: 'Markdown'
@@ -1377,7 +1381,7 @@ async function handleP2PRecipientInput(msg: TelegramBot.Message) {
 
     // Validate recipient
     const validation = await validateP2PRecipient(recipientIdentifier);
-    
+
     if (!validation.isValid) {
       await bot.editMessageText(`❌ *Recipient validation failed*\n\n${validation.error}`, {
         chat_id: chatId,
@@ -1402,19 +1406,19 @@ async function handleP2PRecipientInput(msg: TelegramBot.Message) {
     const tokens = userStates[user.id].transferTokens!;
     let tokenSelectionMessage = `✅ *Recipient Found!*\n\n`;
     tokenSelectionMessage += `👤 *Recipient:* ${validation.user!.firstName || validation.user!.username || 'User'}\n`;
-    tokenSelectionMessage += `💳 *Wallet:* \`${validation.walletAddress!}\`\n\n`;
+    tokenSelectionMessage += `💳 *Wallet:* \`${validation.walletAddress ? truncateAddress(validation.walletAddress) : 'N/A'}\`\n\n`;
     tokenSelectionMessage += `*Select token to send:*\n\n`;
 
     tokens.forEach((token, index) => {
-      tokenSelectionMessage += `${index + 1}. **${token.symbol}** (${token.name})\n`;
-      tokenSelectionMessage += `   💰 Balance: ${token.balance} ${token.symbol}\n\n`;
+      tokenSelectionMessage += `${index + 1}. **${truncateAddress(token.token_address)}**\n`;
+      tokenSelectionMessage += `   💰 Balance: ${token.balance} \n\n`;
     });
 
     const keyboard = {
       reply_markup: {
         inline_keyboard: [
           ...tokens.map((_, index) => [{
-            text: `${index + 1}. ${tokens[index].symbol}`,
+            text: `${index + 1}. ${truncateAddress(tokens[index].token_address)}`,
             callback_data: `p2p_select_token_${index}`
           }]),
           [{ text: '🔙 Back to P2P Transfer', callback_data: 'p2p_transfer' }]
@@ -1465,17 +1469,17 @@ async function handleP2PAmountInput(msg: TelegramBot.Message) {
 
     const userBalance = parseFloat(selectedToken.balance);
     if (transferAmount > userBalance) {
-      await bot.sendMessage(chatId, `❌ Insufficient balance. You have ${userBalance} ${selectedToken.symbol}, but trying to transfer ${transferAmount} ${selectedToken.symbol}.`);
+      await bot.sendMessage(chatId, `❌ Insufficient balance. You have ${userBalance} ${truncateAddress(selectedToken.token_address)}, but trying to transfer ${transferAmount} ${truncateAddress(selectedToken.token_address)}.`);
       return;
     }
 
     // Show P2P confirmation message
     let confirmationMessage = `👥 *P2P Transfer Confirmation*\n\n`;
     confirmationMessage += `👤 *To:* ${recipientUser.firstName || recipientUser.username || 'User'}\n`;
-    confirmationMessage += `💳 *Wallet:* \`${recipientWallet}\`\n`;
-    confirmationMessage += `💰 *Token:* ${selectedToken.name} (${selectedToken.symbol})\n`;
-    confirmationMessage += `🔢 *Amount:* ${transferAmount} ${selectedToken.symbol}\n`;
-    confirmationMessage += `📊 *Your Balance:* ${userBalance} ${selectedToken.symbol}\n\n`;
+    confirmationMessage += `💳 *Wallet:* \`${recipientWallet ? truncateAddress(recipientWallet) : 'N/A'}\`\n`;
+    confirmationMessage += `💰 *Token:* ${truncateAddress(selectedToken.token_address)}\n`;
+    confirmationMessage += `🔢 *Amount:* ${transferAmount} ${truncateAddress(selectedToken.token_address)}\n`;
+    confirmationMessage += `📊 *Your Balance:* ${userBalance} ${truncateAddress(selectedToken.token_address)}\n\n`;
     confirmationMessage += `*Please confirm the P2P transfer:*`;
 
     const keyboard = {
@@ -1516,10 +1520,10 @@ async function handleP2PTokenSelectionCallback(chatId: number, user: TelegramBot
     userStates[user.id].selectedToken = selectedToken;
     userStates[user.id].state = 'p2p_entering_amount';
 
-    let transferMessage = `👥 *P2P Transfer ${selectedToken.symbol}*\n\n`;
+    let transferMessage = `👥 *P2P Transfer ${truncateAddress(selectedToken.token_address)}*\n\n`;
     transferMessage += `👤 *To:* ${recipientUser.firstName || recipientUser.username || 'User'}\n`;
-    transferMessage += `💰 *Selected Token:* ${selectedToken.name} (${selectedToken.symbol})\n`;
-    transferMessage += `📊 *Your Balance:* ${selectedToken.balance} ${selectedToken.symbol}\n\n`;
+    transferMessage += `💰 *Selected Token:* ${truncateAddress(selectedToken.token_address)}\n`;
+    transferMessage += `📊 *Your Balance:* ${selectedToken.balance} ${truncateAddress(selectedToken.token_address)}\n\n`;
     transferMessage += `*Please enter the amount to transfer:*\n`;
     transferMessage += `(Send the amount as a number)`;
 
@@ -1581,10 +1585,10 @@ async function handleP2PTransferConfirmation(chatId: number, user: TelegramBot.U
     });
 
     // Determine if this is a native SOL transfer or SPL token transfer
-    const isNativeSOL = selectedToken.token_address === 'So11111111111111111111111111111111111111112' || selectedToken.symbol === 'SOL' || selectedToken.name === 'Solana';
-    
+    const isNativeSOL = selectedToken.token_address === 'So11111111111111111111111111111111111111112';
+
     let transactionResult;
-    
+
     if (isNativeSOL) {
       // Transfer native SOL
       const { transferSOL } = await import('../utils/blockchainUtils');
@@ -1608,11 +1612,11 @@ async function handleP2PTransferConfirmation(chatId: number, user: TelegramBot.U
     // Show success message with transaction link
     let successMessage = `✅ *P2P Transfer Successful!*\n\n`;
     successMessage += `👤 *To:* ${recipientUser.firstName || recipientUser.username || 'User'}\n`;
-    successMessage += `💰 *Token:* ${selectedToken.name} (${selectedToken.symbol})\n`;
-    successMessage += `🔢 *Amount:* ${amount} ${selectedToken.symbol}\n`;
-    successMessage += `💳 *Recipient Wallet:* \`${recipientWallet}\`\n`;
+    successMessage += `💰 *Token:* ${truncateAddress(selectedToken.token_address)}\n`;
+    successMessage += `🔢 *Amount:* ${amount} ${truncateAddress(selectedToken.token_address)}\n`;
+    successMessage += `💳 *Recipient Wallet:* \`${recipientWallet ? truncateAddress(recipientWallet) : 'N/A'}\`\n`;
     successMessage += `🔗 *Transaction Hash:* \`${transactionResult.transactionHash}\`\n\n`;
-    
+
     // Add Solscan link for the transaction based on network
     const { getSolanaNetworkInfo } = await import('../utils/blockchainUtils');
     const { explorerName } = getSolanaNetworkInfo();
@@ -1678,11 +1682,11 @@ async function sendP2PTransferNotification(recipientTelegramId: number, transfer
   try {
     const { getSolanaNetworkInfo } = await import('../utils/blockchainUtils');
     const { explorerName } = getSolanaNetworkInfo();
-    
+
     let notificationMessage = `🎉 *You received a P2P transfer!*\n\n`;
     notificationMessage += `👤 *From:* ${transferInfo.senderName}\n`;
-    notificationMessage += `💰 *Token:* ${transferInfo.token.name} (${transferInfo.token.symbol})\n`;
-    notificationMessage += `🔢 *Amount:* ${transferInfo.amount} ${transferInfo.token.symbol}\n`;
+    notificationMessage += `💰 *Token:* ${truncateAddress(transferInfo.token.token_address)}\n`;
+    notificationMessage += `🔢 *Amount:* ${transferInfo.amount} ${truncateAddress(transferInfo.token.token_address)}\n`;
     notificationMessage += `🔗 *Transaction:* \`${transferInfo.transactionHash}\`\n\n`;
     notificationMessage += `🔗 [View on ${explorerName}](${transferInfo.solscanUrl})\n\n`;
     notificationMessage += `*The tokens have been transferred to your wallet!*`;
@@ -1741,14 +1745,14 @@ async function handleNFTsCallback(chatId: number, user: TelegramBot.User, messag
     try {
       const { getUserNFTsWithFilters } = await import('../services/nftService');
       const nftData = await getUserNFTsWithFilters(user.id);
-      
+
       if (!userStates[user.id]) userStates[user.id] = { state: '' };
       userStates[user.id].nfts = nftData.nfts;
 
       const { networkInfo } = getNetworkInfo();
-      
+
       let nftMessage = `🖼️ *Your NFT Collection*\n\n`;
-      nftMessage += `📍 *Wallet:* \`${walletInfo.address}\`\n`;
+      nftMessage += `📍 *Wallet:* \`${truncateAddress(walletInfo.address)}\`\n`;
       nftMessage += `🌐 *Network:* ${networkInfo}\n\n`;
       nftMessage += `📊 *Collection Summary:*\n`;
       nftMessage += `• Total NFTs: ${nftData.totalCount}\n`;
@@ -1783,7 +1787,7 @@ async function handleNFTsCallback(chatId: number, user: TelegramBot.User, messag
       // Show first few NFTs
       const displayLimit = 5;
       const displayNFTs = nftData.nfts.slice(0, displayLimit);
-      
+
       displayNFTs.forEach((nft, index) => {
         nftMessage += `${index + 1}. **${nft.name}**\n`;
         if (nft.isEventTicket && nft.eventDetails) {
@@ -1828,9 +1832,9 @@ async function handleNFTsCallback(chatId: number, user: TelegramBot.User, messag
       });
     } catch (nftError) {
       console.error('Error fetching NFTs:', nftError);
-      
+
       let errorMessage = '❌ *Error loading NFTs*\n\n';
-      
+
       if (nftError instanceof Error && nftError.message.includes('MORALIS_API_KEY')) {
         errorMessage += 'Moralis API is not configured. Please contact the administrator to enable NFT functionality.';
       } else {
@@ -1840,7 +1844,7 @@ async function handleNFTsCallback(chatId: number, user: TelegramBot.User, messag
         errorMessage += '• Temporary service unavailability\n\n';
         errorMessage += 'Please try again in a moment.';
       }
-      
+
       await bot.editMessageText(errorMessage, {
         chat_id: chatId,
         message_id: messageId,
@@ -1869,7 +1873,7 @@ async function handleNFTsCallback(chatId: number, user: TelegramBot.User, messag
 async function handleCreateEventCallback(chatId: number, user: TelegramBot.User, messageId: number) {
   try {
     const { isAdmin } = await import('../services/nftService');
-    
+
     if (!isAdmin(user.id)) {
       await bot.editMessageText('❌ Access denied. Only admins can create events.', {
         chat_id: chatId,
@@ -1921,7 +1925,7 @@ async function handleCreateEventCallback(chatId: number, user: TelegramBot.User,
 async function handleMintCustomNFTCallback(chatId: number, user: TelegramBot.User, messageId: number) {
   try {
     const { isAdmin } = await import('../services/nftService');
-    
+
     if (!isAdmin(user.id)) {
       await bot.editMessageText('❌ Access denied. Only admins can mint custom NFTs.', {
         chat_id: chatId,
@@ -2000,20 +2004,20 @@ async function handleEventListCallback(chatId: number, user: TelegramBot.User, m
     }
 
     let eventListMessage = '📋 *All Events*\n\n';
-    
+
     const eventButtons: any[][] = [];
     events.forEach((event, index) => {
       const totalTickets = event.categories.reduce((sum, cat) => sum + cat.maxSupply, 0);
       const availableTickets = event.categories.reduce((sum, cat) => sum + cat.mintAddresses.length, 0);
-      
+
       eventListMessage += `🎫 **${event.name}**\n`;
       eventListMessage += `📅 ${event.date.toDateString()}\n`;
       eventListMessage += `📍 ${event.venue}\n`;
       eventListMessage += `🎫 ${availableTickets}/${totalTickets} tickets available\n\n`;
-      
+
       const callbackData = `view_event_${event.eventId}`;
       console.log(`🔗 Creating button for "${event.name}" with callback_data: "${callbackData}"`);
-      
+
       eventButtons.push([{ text: `🎫 ${event.name}`, callback_data: callbackData }]);
     });
 
@@ -2070,20 +2074,20 @@ async function handleMyTicketsCallback(chatId: number, user: TelegramBot.User, m
     }
 
     let ticketsMessage = `🎫 *My Tickets* (${nftData.ticketCount})\n\n`;
-    
+
     const ticketButtons: any[][] = [];
     nftData.nfts.forEach((ticket, index) => {
       const eventDetails = ticket.eventDetails;
       const isUsed = eventDetails?.isUsed ? '✅ Used' : '🎫 Valid';
-      
+
       ticketsMessage += `🎫 **${ticket.name}**\n`;
       ticketsMessage += `📅 Event: ${eventDetails?.eventName || 'Unknown'}\n`;
       ticketsMessage += `🏷️ Category: ${eventDetails?.category || 'Unknown'}\n`;
       ticketsMessage += `🔒 Status: ${isUsed}\n\n`;
-      
-      ticketButtons.push([{ 
-        text: `🎫 ${ticket.name}`, 
-        callback_data: `view_ticket_${ticket.mint}` 
+
+      ticketButtons.push([{
+        text: `🎫 ${ticket.name}`,
+        callback_data: `view_ticket_${ticket.mint}`
       }]);
     });
 
@@ -2115,7 +2119,7 @@ async function handleMyTicketsCallback(chatId: number, user: TelegramBot.User, m
 async function handleEventStatsCallback(chatId: number, user: TelegramBot.User, messageId: number) {
   try {
     const { isAdmin, getAllEvents, getEventStatistics } = await import('../services/nftService');
-    
+
     if (!isAdmin(user.id)) {
       await bot.editMessageText('❌ Access denied. Only admins can view event statistics.', {
         chat_id: chatId,
@@ -2130,7 +2134,7 @@ async function handleEventStatsCallback(chatId: number, user: TelegramBot.User, 
     }
 
     const events = await getAllEvents();
-    
+
     if (events.length === 0) {
       await bot.editMessageText(
         '📊 *Event Statistics*\n\n' +
@@ -2151,19 +2155,19 @@ async function handleEventStatsCallback(chatId: number, user: TelegramBot.User, 
     }
 
     let statsMessage = '📊 *Event Statistics*\n\n';
-    
+
     const eventButtons: any[][] = [];
     events.forEach(async (event) => {
       const stats = await getEventStatistics(event.eventId);
-      
+
       statsMessage += `🎫 **${event.name}**\n`;
       statsMessage += `📅 ${event.date.toDateString()}\n`;
       statsMessage += `🎫 Sold: ${stats.soldTickets}/${stats.totalTickets}\n`;
       statsMessage += `💰 Revenue: ${stats.revenue} SOL\n\n`;
-      
-      eventButtons.push([{ 
-        text: `📊 ${event.name}`, 
-        callback_data: `event_stats_${event.eventId}` 
+
+      eventButtons.push([{
+        text: `📊 ${event.name}`,
+        callback_data: `event_stats_${event.eventId}`
       }]);
     });
 
@@ -2199,14 +2203,14 @@ async function handleEventsCallback(chatId: number, user: TelegramBot.User, mess
     const userIsAdmin = isAdmin(user.id);
 
     let eventsMessage = `🎫 *Event Tickets & NFTs*\n\n`;
-    
+
     if (events.length === 0) {
       eventsMessage += `*No active events available at the moment.*\n\n`;
       eventsMessage += `💡 **Why this happens:**\n`;
       eventsMessage += `• This is a new system with no events yet\n`;
       eventsMessage += `• Events need to be created by administrators\n`;
       eventsMessage += `• Once events are created, you can buy tickets\n\n`;
-      
+
       if (userIsAdmin) {
         eventsMessage += `🔧 **Admin Actions Available:**\n`;
         eventsMessage += `• Create new events with NFT tickets\n`;
@@ -2259,11 +2263,11 @@ async function handleEventsCallback(chatId: number, user: TelegramBot.User, mess
     }
 
     eventsMessage += `*Available Events:*\n\n`;
-    
+
     events.slice(0, 5).forEach((event, index) => {
       const eventDate = new Date(event.date);
       const isUpcoming = eventDate > new Date();
-      
+
       eventsMessage += `${index + 1}. **${event.name}**\n`;
       eventsMessage += `   📅 ${eventDate.toLocaleDateString()}\n`;
       eventsMessage += `   📍 ${event.venue}\n`;
@@ -2349,10 +2353,10 @@ async function handleRecipientAddressInput(msg: TelegramBot.Message) {
     userStates[user.id].state = 'entering_amount';
 
     const selectedToken = userStates[user.id].selectedToken;
-    let transferMessage = `💸 *Transfer ${selectedToken.symbol}*\n\n`;
-    transferMessage += `*Token:* ${selectedToken.name} (${selectedToken.symbol})\n`;
-    transferMessage += `*Recipient:* \`${recipientAddress}\`\n`;
-    transferMessage += `*Your Balance:* ${selectedToken.balance} ${selectedToken.symbol}\n\n`;
+    let transferMessage = `💸 *Transfer ${truncateAddress(selectedToken.token_address)}*\n\n`;
+    transferMessage += `*Token:* ${truncateAddress(selectedToken.token_address)}\n`;
+    transferMessage += `*Recipient:* \`${recipientAddress ? truncateAddress(recipientAddress) : 'N/A'}\`\n`;
+    transferMessage += `*Your Balance:* ${selectedToken.balance} ${truncateAddress(selectedToken.token_address)}\n\n`;
     transferMessage += `*Please enter the amount to transfer:*\n`;
     transferMessage += `(Send the amount as a number)`;
 
@@ -2404,16 +2408,16 @@ async function handleAmountInput(msg: TelegramBot.Message) {
 
     const userBalance = parseFloat(selectedToken.balance);
     if (transferAmount > userBalance) {
-      await bot.sendMessage(chatId, `❌ Insufficient balance. You have ${userBalance} ${selectedToken.symbol}, but trying to transfer ${transferAmount} ${selectedToken.symbol}.`);
+      await bot.sendMessage(chatId, `❌ Insufficient balance. You have ${userBalance} ${truncateAddress(selectedToken.token_address)}, but trying to transfer ${transferAmount} ${truncateAddress(selectedToken.token_address)}.`);
       return;
     }
 
     // Show confirmation message
     let confirmationMessage = `💸 *Transfer Confirmation*\n\n`;
-    confirmationMessage += `*Token:* ${selectedToken.name} (${selectedToken.symbol})\n`;
-    confirmationMessage += `*Amount:* ${transferAmount} ${selectedToken.symbol}\n`;
-    confirmationMessage += `*Recipient:* \`${recipientAddress}\`\n`;
-    confirmationMessage += `*Your Balance:* ${userBalance} ${selectedToken.symbol}\n\n`;
+    confirmationMessage += `*Token:* ${truncateAddress(selectedToken.token_address)}\n`;
+    confirmationMessage += `*Amount:* ${transferAmount} ${truncateAddress(selectedToken.token_address)}\n`;
+    confirmationMessage += `*Recipient:* \`${recipientAddress ? truncateAddress(recipientAddress) : 'N/A'}\`\n`;
+    confirmationMessage += `*Your Balance:* ${userBalance} ${truncateAddress(selectedToken.token_address)}\n\n`;
     confirmationMessage += `*Please confirm the transfer:*`;
 
     const keyboard = {
@@ -2469,11 +2473,11 @@ async function handleTransferConfirmation(chatId: number, user: TelegramBot.User
       parse_mode: 'Markdown'
     });
 
-        // Determine if this is a native SOL transfer or SPL token transfer
-    const isNativeSOL = selectedToken.token_address === 'So11111111111111111111111111111111111111112' || selectedToken.symbol === 'SOL' || selectedToken.name === 'Solana';
-    
+    // Determine if this is a native SOL transfer or SPL token transfer
+    const isNativeSOL = selectedToken.token_address === 'So11111111111111111111111111111111111111112';
+
     let transactionResult;
-    
+
     if (isNativeSOL) {
       // Transfer native SOL
       const { transferSOL } = await import('../utils/blockchainUtils');
@@ -2496,11 +2500,11 @@ async function handleTransferConfirmation(chatId: number, user: TelegramBot.User
 
     // Show success message with transaction link
     let successMessage = `✅ *Transfer Successful!*\n\n`;
-    successMessage += `*Token:* ${selectedToken.name} (${selectedToken.symbol})\n`;
-    successMessage += `*Amount:* ${amount} ${selectedToken.symbol}\n`;
-    successMessage += `*Recipient:* \`${recipientAddress}\`\n`;
+    successMessage += `*Token:* ${truncateAddress(selectedToken.token_address)}\n`;
+    successMessage += `*Amount:* ${amount} ${truncateAddress(selectedToken.token_address)}\n`;
+    successMessage += `*Recipient:* \`${recipientAddress ? truncateAddress(recipientAddress) : 'N/A'}\`\n`;
     successMessage += `*Transaction Hash:* \`${transactionResult.transactionHash}\`\n\n`;
-    
+
     // Add Solscan link for the transaction based on network
     const { getSolanaNetworkInfo } = await import('../utils/blockchainUtils');
     const { isTestnet, explorerName } = getSolanaNetworkInfo();
@@ -2559,7 +2563,7 @@ async function handleWallet(msg: TelegramBot.Message) {
       let walletMessage = `
 💰 *Your Wallet Information*
 
-📍 *Address:* \`${walletInfo.address}\`
+📍 *Address:* \`${truncateAddress(walletInfo.address)}\`
 🔐 *Type:* ${walletInfo.isCustom ? 'Custom Wallet' : 'Auto-generated'}
 
 💎 *Native Balance:*
@@ -2624,7 +2628,7 @@ async function handleCreateWallet(msg: TelegramBot.Message) {
     const successMessage = `
 🎉 *Wallet Created Successfully!*
 
-📍 *Address:* \`${wallet.address}\`
+📍 *Address:* \`${truncateAddress(wallet.address)}\`
 🔐 *Type:* Auto-generated
 💰 *Balance:* 0 SOL
 
@@ -2722,7 +2726,7 @@ async function handlePrivateKeyInput(msg: TelegramBot.Message) {
     const successMessage = `
 ✅ *Wallet Imported Successfully!*
 
-📍 *Address:* \`${wallet.address}\`
+📍 *Address:* \`${truncateAddress(wallet.address)}\`
 🔐 *Type:* Custom Wallet
 💰 *Balance:* ${balance} SOL
 
@@ -2802,7 +2806,7 @@ function setupBotHandlers() {
   bot.onText(/\/test_pinata/, async (msg) => {
     const chatId = msg.chat.id;
     const user = msg.from;
-    
+
     if (!user) {
       bot.sendMessage(chatId, '❌ User information not available.');
       return;
@@ -2816,10 +2820,10 @@ function setupBotHandlers() {
 
     try {
       bot.sendMessage(chatId, '🔍 Testing Pinata API configuration...');
-      
+
       const { testPinataSetup } = await import('../utils/nftUtils');
       const result = await testPinataSetup();
-      
+
       if (result.success) {
         bot.sendMessage(chatId, `✅ ${result.message}`, { parse_mode: 'Markdown' });
       } else {
@@ -2835,26 +2839,26 @@ function setupBotHandlers() {
   bot.onText(/\/cleanup_events/, async (msg) => {
     const chatId = msg.chat.id;
     const user = msg.from;
-    
+
     if (!user) {
       bot.sendMessage(chatId, '❌ User information not available.');
       return;
     }
 
     const { isAdmin, cleanupInvalidEventIds } = await import('../services/nftService');
-    
+
     if (!isAdmin(user.id)) {
       bot.sendMessage(chatId, '❌ Access denied. Only admins can run this command.');
       return;
     }
-    
+
     bot.sendMessage(chatId, '🧹 Starting cleanup of invalid event IDs... This may take a moment.');
-    
+
     try {
       const result = await cleanupInvalidEventIds();
-      
+
       if (result.success) {
-        bot.sendMessage(chatId, 
+        bot.sendMessage(chatId,
           `✅ *Event Cleanup Completed!*\n\n` +
           `🔧 **Fixed:** ${result.fixed} events\n` +
           `📊 **Total:** ${result.total} events\n\n` +
@@ -2862,7 +2866,7 @@ function setupBotHandlers() {
           { parse_mode: 'Markdown' }
         );
       } else {
-        bot.sendMessage(chatId, 
+        bot.sendMessage(chatId,
           `❌ *Failed to cleanup events*\n\n` +
           `Error: ${result.error || 'Unknown error'}\n\n` +
           `Please check the logs and try again.`,
@@ -2955,8 +2959,8 @@ function setupBotHandlers() {
           bot.sendMessage(msg.chat.id, confirmText, {
             reply_markup: {
               inline_keyboard: [
-                [ { text: '✅ Confirm', callback_data: `market_confirm_${amount}` } ],
-                [ { text: '❌ Cancel', callback_data: 'market' } ]
+                [{ text: '✅ Confirm', callback_data: `market_confirm_${amount}` }],
+                [{ text: '❌ Cancel', callback_data: 'market' }]
               ]
             }
           });
@@ -3006,20 +3010,20 @@ function setupBotHandlers() {
   bot.onText(/\/debug_system/, async (msg) => {
     const chatId = msg.chat.id;
     const user = msg.from;
-    
+
     if (!user) return;
-    
+
     try {
       const { isAdmin, getAllEvents } = await import('../services/nftService');
       const userIsAdmin = isAdmin(user.id);
-      
+
       if (!userIsAdmin) {
         await bot.sendMessage(chatId, '❌ Access denied. Only admins can use debug commands.');
         return;
       }
-      
+
       let debugMessage = '🔍 **System Debug Information**\n\n';
-      
+
       // Check database connection
       try {
         const { default: dbConnection } = await import('../utils/dbConnetion');
@@ -3027,12 +3031,12 @@ function setupBotHandlers() {
       } catch (error) {
         debugMessage += '❌ Database connection utility failed to load\n';
       }
-      
+
       // Check events
       try {
         const events = await getAllEvents();
         debugMessage += `📊 Events in database: ${events.length}\n`;
-        
+
         if (events.length > 0) {
           events.slice(0, 3).forEach((event, index) => {
             debugMessage += `  ${index + 1}. ${event.name} (ID: ${event.eventId})\n`;
@@ -3041,7 +3045,7 @@ function setupBotHandlers() {
       } catch (error) {
         debugMessage += `❌ Failed to fetch events: ${error}\n`;
       }
-      
+
       // Check environment variables
       const envVars = [
         'TELEGRAM_BOT_TOKEN',
@@ -3050,7 +3054,7 @@ function setupBotHandlers() {
         'ADMIN_WALLET_ADDRESS',
         'PINATA_API_KEY'
       ];
-      
+
       debugMessage += '\n🔧 **Environment Variables:**\n';
       envVars.forEach(varName => {
         const value = process.env[varName];
@@ -3061,14 +3065,14 @@ function setupBotHandlers() {
           debugMessage += `  ❌ ${varName}: Not set\n`;
         }
       });
-      
+
       debugMessage += '\n💡 **Recommendations:**\n';
       debugMessage += '• If no events exist, create one using "🆕 Create Event"\n';
       debugMessage += '• Check MongoDB connection if events fail to load\n';
       debugMessage += '• Verify Solana RPC provider is accessible\n';
-      
+
       await bot.sendMessage(chatId, debugMessage, { parse_mode: 'Markdown' });
-      
+
     } catch (error) {
       console.error('Error in debug command:', error);
       await bot.sendMessage(chatId, `❌ Debug command failed: ${error}`);
@@ -3100,7 +3104,7 @@ function setupBotHandlers() {
 async function handleEventNameInput(msg: TelegramBot.Message) {
   const user = msg.from!;
   const eventName = msg.text!.trim();
-  
+
   if (eventName.length < 3) {
     bot.sendMessage(msg.chat.id, '❌ Event name must be at least 3 characters long. Please try again:');
     return;
@@ -3111,7 +3115,7 @@ async function handleEventNameInput(msg: TelegramBot.Message) {
   userStates[user.id].data.eventData.name = eventName;
   userStates[user.id].state = 'creating_event_description';
 
-  bot.sendMessage(msg.chat.id, 
+  bot.sendMessage(msg.chat.id,
     `✅ Event name set: "${eventName}"\n\n` +
     '**Step 2 of 6:** Event Description\n' +
     'Please enter a description for your event:'
@@ -3121,11 +3125,11 @@ async function handleEventNameInput(msg: TelegramBot.Message) {
 async function handleEventDescriptionInput(msg: TelegramBot.Message) {
   const user = msg.from!;
   const description = msg.text!.trim();
-  
+
   userStates[user.id].data.eventData.description = description;
   userStates[user.id].state = 'creating_event_date';
 
-  bot.sendMessage(msg.chat.id, 
+  bot.sendMessage(msg.chat.id,
     `✅ Description set\n\n` +
     '**Step 3 of 6:** Event Date\n' +
     'Please enter the event date and time (e.g., "2024-12-25 19:00" or "December 25, 2024 7:00 PM"):'
@@ -3135,7 +3139,7 @@ async function handleEventDescriptionInput(msg: TelegramBot.Message) {
 async function handleEventDateInput(msg: TelegramBot.Message) {
   const user = msg.from!;
   const dateInput = msg.text!.trim();
-  
+
   try {
     const eventDate = new Date(dateInput);
     if (isNaN(eventDate.getTime()) || eventDate < new Date()) {
@@ -3146,7 +3150,7 @@ async function handleEventDateInput(msg: TelegramBot.Message) {
     userStates[user.id].data.eventData.date = eventDate;
     userStates[user.id].state = 'creating_event_venue';
 
-    bot.sendMessage(msg.chat.id, 
+    bot.sendMessage(msg.chat.id,
       `✅ Event date set: ${eventDate.toLocaleString()}\n\n` +
       '**Step 4 of 6:** Venue\n' +
       'Please enter the event venue/location:'
@@ -3159,11 +3163,11 @@ async function handleEventDateInput(msg: TelegramBot.Message) {
 async function handleEventVenueInput(msg: TelegramBot.Message) {
   const user = msg.from!;
   const venue = msg.text!.trim();
-  
+
   userStates[user.id].data.eventData.venue = venue;
   userStates[user.id].state = 'creating_event_image';
 
-  bot.sendMessage(msg.chat.id, 
+  bot.sendMessage(msg.chat.id,
     `✅ Venue set: "${venue}"\n\n` +
     '**Step 5 of 6:** Event Image\n' +
     '📸 Upload an image file directly, enter an image URL, or type "skip" to use a default image:'
@@ -3172,12 +3176,12 @@ async function handleEventVenueInput(msg: TelegramBot.Message) {
 
 async function handleEventImageInput(msg: TelegramBot.Message) {
   const user = msg.from!;
-  
+
   // Check if this is a text message (URL or skip)
   if (msg.text) {
     const imageInput = msg.text.trim();
     let imageUrl = 'https://via.placeholder.com/400x300/4CAF50/white?text=Event';
-    
+
     if (imageInput.toLowerCase() !== 'skip') {
       try {
         new URL(imageInput); // Validate URL
@@ -3199,7 +3203,7 @@ async function handleEventImageInput(msg: TelegramBot.Message) {
 // Handle uploaded photos for event images
 async function handleEventPhotoUpload(msg: TelegramBot.Message) {
   const user = msg.from!;
-  
+
   if (!msg.photo || msg.photo.length === 0) {
     bot.sendMessage(msg.chat.id, '❌ No photo found. Please try uploading again or enter an image URL:');
     return;
@@ -3217,11 +3221,11 @@ async function handleEventPhotoUpload(msg: TelegramBot.Message) {
       height: photo.height,
       file_size: photo.file_size
     });
-    
+
     // Get file info from Telegram
     const fileInfo = await bot.getFile(photo.file_id);
     console.log('📁 File info from Telegram:', fileInfo);
-    
+
     if (!fileInfo.file_path) {
       throw new Error('Could not get file path from Telegram');
     }
@@ -3229,16 +3233,16 @@ async function handleEventPhotoUpload(msg: TelegramBot.Message) {
     // Download the file
     const fileUrl = `https://api.telegram.org/file/bot${process.env.TELEGRAM_BOT_TOKEN}/${fileInfo.file_path}`;
     console.log('⬇️ Downloading from:', fileUrl);
-    
+
     const response = await fetch(fileUrl);
-    
+
     if (!response.ok) {
       throw new Error(`Failed to download image: ${response.status} ${response.statusText}`);
     }
 
     const imageBuffer = Buffer.from(await response.arrayBuffer());
     console.log('📏 Downloaded image size:', imageBuffer.length, 'bytes');
-    
+
     // Determine file extension from the file path
     const fileExtension = fileInfo.file_path.split('.').pop() || 'jpg';
     const fileName = `event_${Date.now()}_${user.id}.${fileExtension}`;
@@ -3250,15 +3254,15 @@ async function handleEventPhotoUpload(msg: TelegramBot.Message) {
 
     // Upload to Pinata IPFS
     const { uploadImageToPinata } = await import('../utils/nftUtils');
-    
+
     try {
       const imageUrl = await uploadImageToPinata(imageBuffer, fileName);
-      
+
       // Store the IPFS URL
       userStates[user.id].data.eventData.imageUrl = imageUrl;
       userStates[user.id].state = 'creating_event_categories';
-      
-      bot.sendMessage(msg.chat.id, 
+
+      bot.sendMessage(msg.chat.id,
         `✅ Image uploaded successfully!\n` +
         `📁 File: ${fileName}\n` +
         `📏 Size: ${(imageBuffer.length / 1024).toFixed(1)} KB\n` +
@@ -3269,13 +3273,13 @@ async function handleEventPhotoUpload(msg: TelegramBot.Message) {
       proceedToCategories(msg.chat.id);
     } catch (uploadError) {
       console.error('Pinata upload failed, using fallback:', uploadError);
-      
+
       // Fallback: Use a default image URL for now
       const fallbackImageUrl = 'https://via.placeholder.com/400x300/4CAF50/white?text=Event+Image';
       userStates[user.id].data.eventData.imageUrl = fallbackImageUrl;
       userStates[user.id].state = 'creating_event_categories';
-      
-      bot.sendMessage(msg.chat.id, 
+
+      bot.sendMessage(msg.chat.id,
         `⚠️ Image upload to IPFS failed, but we'll continue with a default image.\n` +
         `📁 File: ${fileName} (${(imageBuffer.length / 1024).toFixed(1)} KB)\n` +
         `❌ Upload Error: ${uploadError instanceof Error ? uploadError.message : 'Unknown error'}\n\n` +
@@ -3290,7 +3294,7 @@ async function handleEventPhotoUpload(msg: TelegramBot.Message) {
     }
   } catch (error) {
     console.error('Error uploading photo:', error);
-    bot.sendMessage(msg.chat.id, 
+    bot.sendMessage(msg.chat.id,
       `❌ Failed to upload image: ${error instanceof Error ? error.message : 'Unknown error'}\n\n` +
       'Please try again, enter an image URL, or type "skip":'
     );
@@ -3298,7 +3302,7 @@ async function handleEventPhotoUpload(msg: TelegramBot.Message) {
 }
 
 function proceedToCategories(chatId: number) {
-  bot.sendMessage(chatId, 
+  bot.sendMessage(chatId,
     `**Step 6 of 6:** Ticket Categories\n` +
     'Type "default" for standard categories:\n' +
     '• VIP: 10 tickets @ 0.1 SOL each\n' +
@@ -3318,9 +3322,9 @@ function proceedToCategories(chatId: number) {
 async function handleEventCategoriesInput(msg: TelegramBot.Message) {
   const user = msg.from!;
   const categoriesInput = msg.text!.trim();
-  
+
   let categories;
-  
+
   if (categoriesInput.toLowerCase() === 'default') {
     categories = [
       { category: 'VIP', price: 0.1, maxSupply: 10, baseImageUrl: userStates[user.id].data.eventData.imageUrl },
@@ -3330,12 +3334,12 @@ async function handleEventCategoriesInput(msg: TelegramBot.Message) {
   } else {
     try {
       categories = JSON.parse(categoriesInput);
-      
+
       // Validate categories
       if (!Array.isArray(categories) || categories.length === 0) {
         throw new Error('Categories must be a non-empty array');
       }
-      
+
       for (const cat of categories) {
         if (!cat.category || !cat.price || !cat.maxSupply) {
           throw new Error('Each category must have category, price, and maxSupply');
@@ -3352,12 +3356,12 @@ async function handleEventCategoriesInput(msg: TelegramBot.Message) {
 
   // **THIS IS WHERE NFT MINTING HAPPENS!**
   userStates[user.id].state = '';
-  
+
   bot.sendMessage(msg.chat.id, '🔄 Creating event and minting NFT tickets... This may take a moment.');
 
   try {
     const { createEvent } = await import('../services/nftService');
-    
+
     const result = await createEvent(user.id, {
       name: userStates[user.id].data.eventData.name,
       description: userStates[user.id].data.eventData.description,
@@ -3370,8 +3374,8 @@ async function handleEventCategoriesInput(msg: TelegramBot.Message) {
     if (result.success) {
       const totalTickets = categories.reduce((sum, cat) => sum + cat.maxSupply, 0);
       const totalCost = (totalTickets * 0.02).toFixed(3);
-      
-      bot.sendMessage(msg.chat.id, 
+
+      bot.sendMessage(msg.chat.id,
         `🎉 *Event Created Successfully!*\n\n` +
         `📅 **${userStates[user.id].data.eventData.name}**\n` +
         `📍 ${userStates[user.id].data.eventData.venue}\n` +
@@ -3381,7 +3385,7 @@ async function handleEventCategoriesInput(msg: TelegramBot.Message) {
         `💰 **Minting Cost:** ~${totalCost} SOL\n` +
         `🔗 **Event ID:** \`${result.eventId}\`\n\n` +
         `✅ All tickets are now available for purchase!`,
-        { 
+        {
           parse_mode: 'Markdown',
           reply_markup: {
             inline_keyboard: [
@@ -3441,7 +3445,7 @@ async function handleEventCategoriesInput(msg: TelegramBot.Message) {
 async function handleCustomNFTNameInput(msg: TelegramBot.Message) {
   const user = msg.from!;
   const nftName = msg.text!.trim();
-  
+
   if (nftName.length < 2) {
     bot.sendMessage(msg.chat.id, '❌ NFT name must be at least 2 characters long. Please try again:');
     return;
@@ -3452,7 +3456,7 @@ async function handleCustomNFTNameInput(msg: TelegramBot.Message) {
   userStates[user.id].data.nftData.name = nftName;
   userStates[user.id].state = 'minting_custom_nft_description';
 
-  bot.sendMessage(msg.chat.id, 
+  bot.sendMessage(msg.chat.id,
     `✅ NFT name set: "${nftName}"\n\n` +
     '**Step 2 of 5:** NFT Description\n' +
     'Please enter a description for your NFT:'
@@ -3462,11 +3466,11 @@ async function handleCustomNFTNameInput(msg: TelegramBot.Message) {
 async function handleCustomNFTDescriptionInput(msg: TelegramBot.Message) {
   const user = msg.from!;
   const description = msg.text!.trim();
-  
+
   userStates[user.id].data.nftData.description = description;
   userStates[user.id].state = 'minting_custom_nft_symbol';
 
-  bot.sendMessage(msg.chat.id, 
+  bot.sendMessage(msg.chat.id,
     `✅ Description set\n\n` +
     '**Step 3 of 5:** NFT Symbol\n' +
     'Please enter a short symbol for your NFT (2-10 characters, e.g., "ART", "BADGE"):'
@@ -3476,16 +3480,16 @@ async function handleCustomNFTDescriptionInput(msg: TelegramBot.Message) {
 async function handleCustomNFTSymbolInput(msg: TelegramBot.Message) {
   const user = msg.from!;
   const symbol = msg.text!.trim().toUpperCase();
-  
+
   if (symbol.length < 2 || symbol.length > 10) {
     bot.sendMessage(msg.chat.id, '❌ Symbol must be 2-10 characters long. Please try again:');
     return;
   }
 
-  userStates[user.id].data.nftData.symbol = symbol;
+  userStates[user.id].data.nftData.name = symbol;
   userStates[user.id].state = 'minting_custom_nft_image';
 
-  bot.sendMessage(msg.chat.id, 
+  bot.sendMessage(msg.chat.id,
     `✅ Symbol set: "${symbol}"\n\n` +
     '**Step 4 of 5:** NFT Image\n' +
     'Please enter the image URL for your NFT (or type "skip" for a default image):'
@@ -3495,9 +3499,9 @@ async function handleCustomNFTSymbolInput(msg: TelegramBot.Message) {
 async function handleCustomNFTImageInput(msg: TelegramBot.Message) {
   const user = msg.from!;
   const imageInput = msg.text!.trim();
-  
+
   let imageUrl = 'https://via.placeholder.com/400x400/9C27B0/white?text=Custom+NFT';
-  
+
   if (imageInput.toLowerCase() !== 'skip') {
     try {
       new URL(imageInput); // Validate URL
@@ -3510,16 +3514,16 @@ async function handleCustomNFTImageInput(msg: TelegramBot.Message) {
 
   // **THIS IS WHERE CUSTOM NFT MINTING HAPPENS!**
   userStates[user.id].state = '';
-  
+
   bot.sendMessage(msg.chat.id, '🔄 Minting your custom NFT... This may take a moment.');
 
   try {
     const { mintCustomNFT } = await import('../services/nftService');
-    
+
     const nftMetadata = {
       name: userStates[user.id].data.nftData.name,
       description: userStates[user.id].data.nftData.description,
-      symbol: userStates[user.id].data.nftData.symbol,
+      symbol: userStates[user.id].data.nftData.name,
       image: imageUrl,
       attributes: [
         { trait_type: 'Type', value: 'Custom Collectible' },
@@ -3531,14 +3535,13 @@ async function handleCustomNFTImageInput(msg: TelegramBot.Message) {
     const result = await mintCustomNFT(user.id, nftMetadata);
 
     if (result.success) {
-      bot.sendMessage(msg.chat.id, 
+      bot.sendMessage(msg.chat.id,
         `🎨 *Custom NFT Minted Successfully!*\n\n` +
         `🏷️ **Name:** ${nftMetadata.name}\n` +
-        `🔤 **Symbol:** ${nftMetadata.symbol}\n` +
         `📝 **Description:** ${nftMetadata.description}\n\n` +
-        `🔗 **Mint Address:** \`${result.mintAddress}\`\n\n` +
+        `🔗 **Mint Address:** \`${result.mintAddress ? truncateAddress(result.mintAddress) : 'N/A'}\`\n\n` +
         `✅ Your NFT has been created and is now in your collection!`,
-        { 
+        {
           parse_mode: 'Markdown',
           reply_markup: {
             inline_keyboard: [
@@ -3595,30 +3598,30 @@ async function handleCustomNFTImageInput(msg: TelegramBot.Message) {
 async function handleViewEventCallback(chatId: number, user: TelegramBot.User, messageId: number, eventId: string) {
   try {
     console.log(`🔍 handleViewEventCallback: Processing eventId="${eventId}"`);
-    
+
     const { getEvent } = await import('../services/nftService');
     const event = await getEvent(eventId);
 
     if (!event) {
       console.log(`❌ Event not found for eventId: "${eventId}"`);
-      
+
       // Provide more helpful error message with options
       const errorMessage = `❌ *Event Not Found*\n\n` +
-          `Event ID: \`${eventId}\`\n\n` +
-          `💡 **Why this happens:**\n` +
-          `• The event was recently created and is still processing\n` +
-          `• There's a temporary database issue\n` +
-          `• The event ID is incorrect\n` +
-          `• The event was deleted or deactivated\n\n` +
-          `🔧 **Troubleshooting:**\n` +
-          `• Refresh the events list to see current events\n` +
-          `• Check if you have the correct event ID\n` +
-          `• Contact support if the issue persists\n\n` +
-          `📋 **Available Actions:**\n` +
-          `• Browse all available events\n` +
-          `• Return to the main events menu\n` +
-          `• Use other bot features`;
-      
+        `Event ID: \`${eventId}\`\n\n` +
+        `💡 **Why this happens:**\n` +
+        `• The event was recently created and is still processing\n` +
+        `• There's a temporary database issue\n` +
+        `• The event ID is incorrect\n` +
+        `• The event was deleted or deactivated\n\n` +
+        `🔧 **Troubleshooting:**\n` +
+        `• Refresh the events list to see current events\n` +
+        `• Check if you have the correct event ID\n` +
+        `• Contact support if the issue persists\n\n` +
+        `📋 **Available Actions:**\n` +
+        `• Browse all available events\n` +
+        `• Return to the main events menu\n` +
+        `• Use other bot features`;
+
       await bot.editMessageText(errorMessage, {
         chat_id: chatId,
         message_id: messageId,
@@ -3648,21 +3651,21 @@ async function handleViewEventCallback(chatId: number, user: TelegramBot.User, m
     eventMessage += `🎫 **Available Tickets:**\n`;
 
     const ticketButtons: any[][] = [];
-    
+
     event?.categories.forEach(cat => {
       const available = cat.mintAddresses.length;
       const total = cat.maxSupply;
       const status = available > 0 ? '🟢 Available' : '🔴 Sold Out';
-      
+
       eventMessage += `• **${cat.category}**: ${cat.price} SOL - ${available}/${total} available ${status}\n`;
-      
+
       if (available > 0) {
         const callbackData = `purchase_ticket_${eventId}_${cat.category}`;
         console.log(`🔗 Creating buy button for "${event.name}" - ${cat.category} with callback_data: "${callbackData}"`);
-        
-        ticketButtons.push([{ 
-          text: `🎫 Buy ${cat.category} (${cat.price} SOL)`, 
-          callback_data: callbackData 
+
+        ticketButtons.push([{
+          text: `🎫 Buy ${cat.category} (${cat.price} SOL)`,
+          callback_data: callbackData
         }]);
       }
     });
@@ -3695,7 +3698,7 @@ async function handleViewEventCallback(chatId: number, user: TelegramBot.User, m
 async function handlePurchaseTicketCallback(chatId: number, user: TelegramBot.User, messageId: number, eventId: string, category: 'VIP' | 'Standard' | 'Group') {
   try {
     console.log(`🔍 Attempting to purchase ticket for event: ${eventId}, category: ${category}`);
-    
+
     const { purchaseTicket, getEvent } = await import('../services/nftService');
     const event = await getEvent(eventId);
 
@@ -3710,24 +3713,24 @@ async function handlePurchaseTicketCallback(chatId: number, user: TelegramBot.Us
       } catch (debugError) {
         console.log(`❌ Could not fetch all events for debugging: ${debugError}`);
       }
-      
+
       const errorMessage = `❌ *Event Not Found*\n\n` +
-          `Event ID: \`${eventId}\`\n\n` +
-          `💡 **Why this happens:**\n` +
-          `• The event was deleted or deactivated\n` +
-          `• The event ID is incorrect\n` +
-          `• There's a database connection issue\n` +
-          `• The event is still being processed\n\n` +
-          `🔧 **Troubleshooting:**\n` +
-          `• Refresh the events list to see current events\n` +
-          `• Check if you have the correct event ID\n` +
-          `• Try again in a few moments\n` +
-          `• Contact support if the issue persists\n\n` +
-          `📋 **Available Actions:**\n` +
-          `• Browse all available events\n` +
-          `• Return to the main events menu\n` +
-          `• Use other bot features`;
-      
+        `Event ID: \`${eventId}\`\n\n` +
+        `💡 **Why this happens:**\n` +
+        `• The event was deleted or deactivated\n` +
+        `• The event ID is incorrect\n` +
+        `• There's a database connection issue\n` +
+        `• The event is still being processed\n\n` +
+        `🔧 **Troubleshooting:**\n` +
+        `• Refresh the events list to see current events\n` +
+        `• Check if you have the correct event ID\n` +
+        `• Try again in a few moments\n` +
+        `• Contact support if the issue persists\n\n` +
+        `📋 **Available Actions:**\n` +
+        `• Browse all available events\n` +
+        `• Return to the main events menu\n` +
+        `• Use other bot features`;
+
       await bot.editMessageText(errorMessage, {
         chat_id: chatId,
         message_id: messageId,
@@ -3791,7 +3794,7 @@ async function handlePurchaseTicketCallback(chatId: number, user: TelegramBot.Us
         `🎫 **Event:** ${event?.name}\n` +
         `🏷️ **Category:** ${category}\n` +
         `💰 **Price:** ${categoryData.price} SOL\n` +
-        `🔗 **Ticket NFT:** \`${result.mintAddress}\`\n\n` +
+        `🔗 **Ticket NFT:** \`${result.mintAddress ? truncateAddress(result.mintAddress) : 'N/A'}\`\n\n` +
         `✅ Your ticket is now in your wallet and ready for use at the event!`,
         {
           chat_id: chatId,
@@ -3846,7 +3849,7 @@ async function handleViewTicketCallback(chatId: number, user: TelegramBot.User, 
   try {
     const { getNFTMetadata } = await import('../utils/nftUtils');
     const { isAdmin } = await import('../services/nftService');
-    
+
     const ticket = await getNFTMetadata(mintAddress);
 
     if (!ticket) {
@@ -3872,7 +3875,7 @@ async function handleViewTicketCallback(chatId: number, user: TelegramBot.User, 
     ticketMessage += `📍 **Venue:** ${ticket.attributes?.find(attr => attr.trait_type === 'Venue')?.value || 'Unknown'}\n`;
     ticketMessage += `💺 **Seat:** ${ticket.attributes?.find(attr => attr.trait_type === 'Seat')?.value || 'Unknown'}\n`;
     ticketMessage += `🔒 **Status:** ${isUsed}\n\n`;
-    ticketMessage += `🔗 **NFT Address:** \`${mintAddress}\`\n`;
+    ticketMessage += `🔗 **NFT Address:** \`${truncateAddress(mintAddress)}\`\n`;
 
     if (ticket.image) {
       ticketMessage += `\n🖼️ [View Ticket Image](${ticket.image})`;
@@ -4008,7 +4011,7 @@ async function handleValidateTicketCallback(chatId: number, user: TelegramBot.Us
 async function handleAdminCheckNFTsCallback(chatId: number, user: TelegramBot.User, messageId: number) {
   try {
     const { getAdminWalletNFTs, isAdmin } = await import('../services/nftService');
-    
+
     if (!isAdmin(user.id)) {
       await bot.editMessageText('❌ Access denied. Admin only.', {
         chat_id: chatId,
@@ -4032,7 +4035,7 @@ async function handleAdminCheckNFTsCallback(chatId: number, user: TelegramBot.Us
     if (result && Array.isArray(result)) {
       let message = `📊 *Admin Wallet NFT Inventory*\n\n`;
       message += `🔑 **Total NFTs:** ${result.length}\n\n`;
-      
+
       if (result.length > 0) {
         message += `*Recent NFTs:*\n`;
         result.slice(0, 10).forEach((nft, index) => {
@@ -4040,7 +4043,7 @@ async function handleAdminCheckNFTsCallback(chatId: number, user: TelegramBot.Us
           message += `   🔗 \`${nft.mint}\`\n`;
           message += `   🎫 ${nft.type === 'ticket' ? 'Event Ticket' : 'Collectible'}\n\n`;
         });
-        
+
         if (result.length > 10) {
           message += `... and ${result.length - 10} more NFTs\n\n`;
         }
@@ -4095,7 +4098,7 @@ async function handleAdminCheckNFTsCallback(chatId: number, user: TelegramBot.Us
 async function handleAdminDebugEventCallback(chatId: number, user: TelegramBot.User, messageId: number) {
   try {
     const { getAllEvents, isAdmin } = await import('../services/nftService');
-    
+
     if (!isAdmin(user.id)) {
       await bot.editMessageText('❌ Access denied. Admin only.', {
         chat_id: chatId,
@@ -4110,7 +4113,7 @@ async function handleAdminDebugEventCallback(chatId: number, user: TelegramBot.U
     }
 
     const events = await getAllEvents();
-    
+
     if (events.length === 0) {
       await bot.editMessageText('📋 *No events to debug*\n\nCreate an event first to debug NFT status.', {
         chat_id: chatId,
@@ -4130,19 +4133,19 @@ async function handleAdminDebugEventCallback(chatId: number, user: TelegramBot.U
 
     let message = `🔍 *Debug Event NFTs*\n\n`;
     message += `Select an event to debug:\n\n`;
-    
+
     const eventButtons: any[][] = [];
     events.forEach((event, index) => {
       const totalTickets = event.categories.reduce((sum, cat) => sum + cat.maxSupply, 0);
       const availableTickets = event.categories.reduce((sum, cat) => sum + cat.mintAddresses.length, 0);
-      
+
       message += `${index + 1}. **${event.name}**\n`;
       message += `   🎫 ${availableTickets}/${totalTickets} tickets available\n`;
       message += `   📅 ${event.date.toDateString()}\n\n`;
-      
-      eventButtons.push([{ 
-        text: `🔍 Debug ${event.name}`, 
-        callback_data: `debug_event_${event.eventId}` 
+
+      eventButtons.push([{
+        text: `🔍 Debug ${event.name}`,
+        callback_data: `debug_event_${event.eventId}`
       }]);
     });
 
@@ -4174,16 +4177,16 @@ async function handleAdminDebugEventCallback(chatId: number, user: TelegramBot.U
 async function handleAdminFixEventsCallback(chatId: number, user: TelegramBot.User, messageId: number) {
   try {
     console.log(`🔧 Admin ${user.id} requested to fix all invalid event IDs`);
-    
+
     const { fixAllInvalidEventIds } = await import('../services/nftService');
     const result = await fixAllInvalidEventIds();
-    
+
     if (result.success) {
       const message = `🔧 *Event ID Fix Complete*\n\n` +
         `✅ Successfully processed ${result.total} events\n` +
         `🔧 Fixed ${result.fixed} invalid event IDs\n\n` +
         `All events should now be accessible to users!`;
-      
+
       await bot.editMessageText(message, {
         chat_id: chatId,
         message_id: messageId,
@@ -4201,7 +4204,7 @@ async function handleAdminFixEventsCallback(chatId: number, user: TelegramBot.Us
       const errorMessage = `❌ *Event ID Fix Failed*\n\n` +
         `Error: ${result.error}\n\n` +
         `Please try again or contact support.`;
-      
+
       await bot.editMessageText(errorMessage, {
         chat_id: chatId,
         message_id: messageId,
@@ -4234,7 +4237,7 @@ async function handleAdminFixEventsCallback(chatId: number, user: TelegramBot.Us
 async function handleDebugSpecificEventCallback(chatId: number, user: TelegramBot.User, messageId: number, eventId: string) {
   try {
     const { debugEventNFTs, isAdmin } = await import('../services/nftService');
-    
+
     if (!isAdmin(user.id)) {
       await bot.editMessageText('❌ Access denied. Admin only.', {
         chat_id: chatId,
@@ -4257,19 +4260,19 @@ async function handleDebugSpecificEventCallback(chatId: number, user: TelegramBo
       message += `• Available: ${result.totalAvailable}\n`;
       message += `• Sold: ${result.totalSold}\n\n`;
       message += `🎫 **Ticket Categories:**\n`;
-      
+
       result.categories.forEach((cat: any) => {
         const available = cat.available;
         const total = cat.minted;
         const sold = cat.sold;
         const status = available > 0 ? '🟢 Available' : '🔴 Sold Out';
-        
+
         message += `\n**${cat.category}** (${cat.price} SOL)\n`;
         message += `   📊 ${available}/${total} available ${status}\n`;
         message += `   💰 ${sold} sold\n`;
-        
+
         if (cat.mintAddresses && cat.mintAddresses.length > 0) {
-          message += `   🔗 Sample mint: \`${cat.mintAddresses[0]}\`\n`;
+          message += `   🔗 Sample mint: \`${truncateAddress(cat.mintAddresses[0])}\`\n`;
         }
       });
 
@@ -4323,19 +4326,19 @@ async function handleDebugSpecificEventCallback(chatId: number, user: TelegramBo
 async function handleNFTMarketplaceCallback(chatId: number, user: TelegramBot.User, messageId: number) {
   try {
     const { getActiveNFTListings, getNFTListingsBySeller } = await import('../services/nftService');
-    
+
     const allListings = await getActiveNFTListings();
     const userListings = await getNFTListingsBySeller(user.id);
-    
+
     let message = `🛒 *NFT Marketplace*\n\n`;
     message += `📊 **Market Overview:**\n`;
     message += `• Total Active Listings: ${allListings.length}\n`;
     message += `• Your Listings: ${userListings.length}\n\n`;
-    
+
     if (allListings.length === 0) {
       message += `*No NFTs are currently listed for sale.*\n\n`;
       message += `Be the first to list an NFT!`;
-      
+
       const keyboard = {
         reply_markup: {
           inline_keyboard: [
@@ -4347,7 +4350,7 @@ async function handleNFTMarketplaceCallback(chatId: number, user: TelegramBot.Us
           ]
         }
       };
-      
+
       await bot.editMessageText(message, {
         chat_id: chatId,
         message_id: messageId,
@@ -4356,13 +4359,13 @@ async function handleNFTMarketplaceCallback(chatId: number, user: TelegramBot.Us
       });
       return;
     }
-    
+
     // Show first few listings
     const displayLimit = 5;
     const displayListings = allListings.slice(0, displayLimit);
-    
+
     message += `🔥 **Featured Listings:**\n\n`;
-    
+
     displayListings.forEach((listing, index) => {
       message += `${index + 1}. **NFT Listing**\n`;
       message += `   💰 Price: ${listing.price} SOL\n`;
@@ -4374,11 +4377,11 @@ async function handleNFTMarketplaceCallback(chatId: number, user: TelegramBot.Us
       }
       message += `\n`;
     });
-    
+
     if (allListings.length > displayLimit) {
       message += `... and ${allListings.length - displayLimit} more listings\n\n`;
     }
-    
+
     const keyboard = {
       reply_markup: {
         inline_keyboard: [
@@ -4397,7 +4400,7 @@ async function handleNFTMarketplaceCallback(chatId: number, user: TelegramBot.Us
         ]
       }
     };
-    
+
     await bot.editMessageText(message, {
       chat_id: chatId,
       message_id: messageId,
@@ -4422,17 +4425,17 @@ async function handleNFTMarketplaceCallback(chatId: number, user: TelegramBot.Us
 async function handleNFTListCallback(chatId: number, user: TelegramBot.User, messageId: number, filter: 'all' | 'tickets' | 'collectibles') {
   try {
     const { getUserNFTsWithFilters } = await import('../services/nftService');
-    
+
     const nftData = await getUserNFTsWithFilters(user.id, { type: filter });
-    
+
     let message = `🖼️ *Your NFT Collection*\n\n`;
     message += `🔍 **Filter:** ${filter.charAt(0).toUpperCase() + filter.slice(1)}\n`;
     message += `📊 **Total:** ${nftData.totalCount} NFTs\n\n`;
-    
+
     if (nftData.nfts.length === 0) {
       message += `*No NFTs found with this filter.*\n\n`;
       message += `Try a different filter or check your collection.`;
-      
+
       const keyboard = {
         reply_markup: {
           inline_keyboard: [
@@ -4445,7 +4448,7 @@ async function handleNFTListCallback(chatId: number, user: TelegramBot.User, mes
           ]
         }
       };
-      
+
       await bot.editMessageText(message, {
         chat_id: chatId,
         message_id: messageId,
@@ -4454,7 +4457,7 @@ async function handleNFTListCallback(chatId: number, user: TelegramBot.User, mes
       });
       return;
     }
-    
+
     // Show all NFTs with this filter
     nftData.nfts.forEach((nft, index) => {
       message += `${index + 1}. **${nft.name}**\n`;
@@ -4465,9 +4468,9 @@ async function handleNFTListCallback(chatId: number, user: TelegramBot.User, mes
       } else {
         message += `   🖼️ Collectible\n`;
       }
-      message += `   🔗 Mint: \`${nft.mint}\`\n\n`;
+      message += `   🔗 Mint: \`${truncateAddress(nft.mint)}\`\n\n`;
     });
-    
+
     const keyboard = {
       reply_markup: {
         inline_keyboard: [
@@ -4484,7 +4487,7 @@ async function handleNFTListCallback(chatId: number, user: TelegramBot.User, mes
         ]
       }
     };
-    
+
     await bot.editMessageText(message, {
       chat_id: chatId,
       message_id: messageId,
@@ -4509,9 +4512,9 @@ async function handleNFTListCallback(chatId: number, user: TelegramBot.User, mes
 async function handleNFTTransferCallback(chatId: number, user: TelegramBot.User, messageId: number) {
   try {
     const { getUserNFTsWithFilters } = await import('../services/nftService');
-    
+
     const nftData = await getUserNFTsWithFilters(user.id);
-    
+
     if (nftData.totalCount === 0) {
       await bot.editMessageText('❌ You don\'t have any NFTs to transfer.', {
         chat_id: chatId,
@@ -4524,12 +4527,12 @@ async function handleNFTTransferCallback(chatId: number, user: TelegramBot.User,
       });
       return;
     }
-    
+
     let message = `👥 *Transfer NFT*\n\n`;
     message += `Select an NFT to transfer:\n\n`;
-    
+
     const nftButtons: any[][] = [];
-    
+
     nftData.nfts.forEach((nft, index) => {
       const nftName = nft.name || `NFT ${index + 1}`;
       nftButtons.push([{
@@ -4537,9 +4540,9 @@ async function handleNFTTransferCallback(chatId: number, user: TelegramBot.User,
         callback_data: `nft_transfer_select_${nft.mint}`
       }]);
     });
-    
+
     nftButtons.push([{ text: '🔙 Back', callback_data: 'nfts' }]);
-    
+
     await bot.editMessageText(message, {
       chat_id: chatId,
       message_id: messageId,

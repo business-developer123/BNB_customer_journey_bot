@@ -1,0 +1,931 @@
+{
+	"info": {
+		"_postman_id": "f2e89761-33c1-474e-8732-dcb5257b94d6",
+		"name": "PAIEMENT MARCHAND - OM",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+		"_exporter_id": "46009519",
+		"_collection_link": "https://nexthope.postman.co/workspace/nexthope's-Workspace~f1f8b148-fe34-4421-82a4-9a856d8fb08e/collection/46009519-f2e89761-33c1-474e-8732-dcb5257b94d6?action=share&source=collection_link&creator=46009519"
+	},
+	"item": [
+		{
+			"name": "Search transaction  APIs",
+			"item": [
+				{
+					"name": "Search transactions",
+					"request": {
+						"auth": {
+							"type": "bearer",
+							"bearer": [
+								{
+									"key": "token",
+									"value": "",
+									"type": "string"
+								}
+							]
+						},
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "https://api.sandbox.orange-sonatel.com/api/eWallet/v1/transactions",
+							"protocol": "https",
+							"host": [
+								"api",
+								"sandbox",
+								"orange-sonatel",
+								"com"
+							],
+							"path": [
+								"api",
+								"eWallet",
+								"v1",
+								"transactions"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Search transactions by id",
+					"request": {
+						"auth": {
+							"type": "bearer",
+							"bearer": [
+								{
+									"key": "token",
+									"value": "",
+									"type": "string"
+								}
+							]
+						},
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "https://api.sandbox.orange-sonatel.com/api/eWallet/v1/transactions?transactionId=MP211018.1631.E00307",
+							"protocol": "https",
+							"host": [
+								"api",
+								"sandbox",
+								"orange-sonatel",
+								"com"
+							],
+							"path": [
+								"api",
+								"eWallet",
+								"v1",
+								"transactions"
+							],
+							"query": [
+								{
+									"key": "transactionId",
+									"value": "MP211018.1631.E00307"
+								}
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Search transactions by status",
+					"request": {
+						"auth": {
+							"type": "bearer",
+							"bearer": [
+								{
+									"key": "token",
+									"value": "",
+									"type": "string"
+								}
+							]
+						},
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "https://api.sandbox.orange-sonatel.com/api/eWallet/v1/transactions?status=SUCCESS",
+							"protocol": "https",
+							"host": [
+								"api",
+								"sandbox",
+								"orange-sonatel",
+								"com"
+							],
+							"path": [
+								"api",
+								"eWallet",
+								"v1",
+								"transactions"
+							],
+							"query": [
+								{
+									"key": "status",
+									"value": "SUCCESS"
+								}
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Search transactions between dates",
+					"request": {
+						"auth": {
+							"type": "bearer",
+							"bearer": [
+								{
+									"key": "token",
+									"value": "",
+									"type": "string"
+								}
+							]
+						},
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "https://api.sandbox.orange-sonatel.com/api/eWallet/v1/transactions?fromDateTime=2021-06-20T00:00:00&toDateTime=2021-06-24T23:59:59",
+							"protocol": "https",
+							"host": [
+								"api",
+								"sandbox",
+								"orange-sonatel",
+								"com"
+							],
+							"path": [
+								"api",
+								"eWallet",
+								"v1",
+								"transactions"
+							],
+							"query": [
+								{
+									"key": "fromDateTime",
+									"value": "2021-06-20T00:00:00"
+								},
+								{
+									"key": "toDateTime",
+									"value": "2021-06-24T23:59:59"
+								}
+							]
+						}
+					},
+					"response": []
+				}
+			],
+			"event": [
+				{
+					"listen": "prerequest",
+					"script": {
+						"type": "text/javascript",
+						"exec": [
+							""
+						]
+					}
+				},
+				{
+					"listen": "test",
+					"script": {
+						"type": "text/javascript",
+						"exec": [
+							""
+						]
+					}
+				}
+			]
+		},
+		{
+			"name": "Get token",
+			"event": [
+				{
+					"listen": "test",
+					"script": {
+						"exec": [
+							"const auth = pm.response.json();",
+							"pm.test(\"Status Code is 200\", function () {",
+							"    pm.globals.set(\"TOKEN\", auth.access_token);",
+							"    pm.response.to.have.status(200);",
+							"});",
+							""
+						],
+						"type": "text/javascript",
+						"packages": {}
+					}
+				}
+			],
+			"request": {
+				"auth": {
+					"type": "noauth"
+				},
+				"method": "POST",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json",
+						"type": "text",
+						"disabled": true
+					},
+					{
+						"key": "grant_type",
+						"value": "client_credentials",
+						"type": "text",
+						"disabled": true
+					}
+				],
+				"body": {
+					"mode": "urlencoded",
+					"urlencoded": [
+						{
+							"key": "grant_type",
+							"value": "client_credentials",
+							"type": "text"
+						},
+						{
+							"key": "client_secret",
+							"value": "1afdf8bc-b37b-43b5-b4cb-56feb7284e50",
+							"type": "text"
+						},
+						{
+							"key": "client_id",
+							"value": "113c6c71-74a9-49be-aa5b-3eb840b45b27",
+							"type": "text"
+						}
+					]
+				},
+				"url": {
+					"raw": "https://api.sandbox.orange-sonatel.com/oauth/token",
+					"protocol": "https",
+					"host": [
+						"api",
+						"sandbox",
+						"orange-sonatel",
+						"com"
+					],
+					"path": [
+						"oauth",
+						"token"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "Get token Copy",
+			"event": [
+				{
+					"listen": "test",
+					"script": {
+						"exec": [
+							"const auth = pm.response.json();",
+							"pm.test(\"Status Code is 200\", function () {",
+							"    pm.globals.set(\"TOKEN\", auth.access_token);",
+							"    pm.response.to.have.status(200);",
+							"});",
+							""
+						],
+						"type": "text/javascript",
+						"packages": {}
+					}
+				}
+			],
+			"request": {
+				"auth": {
+					"type": "noauth"
+				},
+				"method": "POST",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json",
+						"type": "text",
+						"disabled": true
+					},
+					{
+						"key": "grant_type",
+						"value": "client_credentials",
+						"type": "text",
+						"disabled": true
+					}
+				],
+				"body": {
+					"mode": "urlencoded",
+					"urlencoded": [
+						{
+							"key": "grant_type",
+							"value": "client_credentials",
+							"type": "text"
+						},
+						{
+							"key": "client_secret",
+							"value": "1afdf8bc-b37b-43b5-b4cb-56feb7284e50",
+							"type": "text"
+						},
+						{
+							"key": "client_id",
+							"value": "113c6c71-74a9-49be-aa5b-3eb840b45b27",
+							"type": "text"
+						}
+					]
+				},
+				"url": {
+					"raw": "https://api.sandbox.orange-sonatel.com/oauth/token",
+					"protocol": "https",
+					"host": [
+						"api",
+						"sandbox",
+						"orange-sonatel",
+						"com"
+					],
+					"path": [
+						"oauth",
+						"token"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "Get public key",
+			"event": [
+				{
+					"listen": "prerequest",
+					"script": {
+						"exec": [
+							""
+						],
+						"type": "text/javascript",
+						"packages": {}
+					}
+				}
+			],
+			"request": {
+				"auth": {
+					"type": "bearer",
+					"bearer": [
+						{
+							"key": "token",
+							"value": "{{TOKEN}}",
+							"type": "string"
+						}
+					]
+				},
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "https://api.sandbox.orange-sonatel.com/api/account/v1/publicKeys",
+					"protocol": "https",
+					"host": [
+						"api",
+						"sandbox",
+						"orange-sonatel",
+						"com"
+					],
+					"path": [
+						"api",
+						"account",
+						"v1",
+						"publicKeys"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "Test numbers (Sandbox only)",
+			"request": {
+				"auth": {
+					"type": "bearer",
+					"bearer": [
+						{
+							"key": "token",
+							"value": "{{TOKEN}}",
+							"type": "string"
+						},
+						{
+							"key": "password",
+							"value": "{{TOKEN}}",
+							"type": "string"
+						}
+					]
+				},
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "https://api.sandbox.orange-sonatel.com/api/assignments/v1/partner/sim-cards?nbMerchants=1&nbCustomers=1",
+					"protocol": "https",
+					"host": [
+						"api",
+						"sandbox",
+						"orange-sonatel",
+						"com"
+					],
+					"path": [
+						"api",
+						"assignments",
+						"v1",
+						"partner",
+						"sim-cards"
+					],
+					"query": [
+						{
+							"key": "nbMerchants",
+							"value": "1"
+						},
+						{
+							"key": "nbCustomers",
+							"value": "1"
+						}
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "Generate OTP (Sandbox only)",
+			"event": [
+				{
+					"listen": "prerequest",
+					"script": {
+						"exec": [
+							"function generateCorrelationId(){",
+							"    var dt = new Date().getTime();",
+							"    var uuid = 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {",
+							"        var r = (dt + Math.random()*16)%16 | 0;",
+							"        dt = Math.floor(dt/16);",
+							"        return (c=='x' ? r :(r&0x3|0x8)).toString(16);",
+							"    });",
+							"    return uuid;",
+							"}",
+							"pm.globals.set(\"CorrelationId\", generateCorrelationId());",
+							"console.log('generateCorrelationId => ', generateCorrelationId())"
+						],
+						"type": "text/javascript",
+						"packages": {}
+					}
+				},
+				{
+					"listen": "test",
+					"script": {
+						"exec": [
+							"function create_UUID(){",
+							"    var dt = new Date().getTime();",
+							"    var uuid = 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {",
+							"        var r = (dt + Math.random()*16)%16 | 0;",
+							"        dt = Math.floor(dt/16);",
+							"        return (c=='x' ? r :(r&0x3|0x8)).toString(16);",
+							"    });",
+							"    return uuid;",
+							"}",
+							"",
+							"console.log('create_UUID => ', create_UUID())"
+						],
+						"type": "text/javascript",
+						"packages": {}
+					}
+				}
+			],
+			"request": {
+				"auth": {
+					"type": "bearer",
+					"bearer": [
+						{
+							"key": "token",
+							"value": "{{TOKEN}}",
+							"type": "string"
+						}
+					]
+				},
+				"method": "POST",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json",
+						"type": "text"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n    \"idType\": \"MSISDN\",\n    \"id\": \"770998631\",\n    \"encryptedPinCode\":\"D7xi8xxwPk0nhH4owzqBmyJ1ozESNJ8IUs63NZlu0S+RBk4Wfn4diTSiAkqiYX09r7d23Gkl1hDuvqe+Jd9sEhH4pRbxxrnM32phqK7N8q5i1lRub7ovkj9fSX/YS+0mjOrcv1iii/FeNob6wsTAuAEFwYu8ClGtwgQFzQR6ZIbCrIhLU4U0RKnAmhfoi5IwZ3BABOq2O5UANlIe1LZChas8x+LFpp3cMLta80RgEIxpwkzBU4qex4b0JxgUuOuvQvVAdbSRe4kKwiG0NpSKD8kaUaH2/QcaZKrwJu0u7/e+Nn5NRqKSRmIU8OgBkJhmw/VfRww5FaHIWLZcZjHILg==\"\n}",
+					"options": {
+						"raw": {
+							"language": "json"
+						}
+					}
+				},
+				"url": {
+					"raw": "https://api.sandbox.orange-sonatel.com/api/eWallet/v1/payments/otp",
+					"protocol": "https",
+					"host": [
+						"api",
+						"sandbox",
+						"orange-sonatel",
+						"com"
+					],
+					"path": [
+						"api",
+						"eWallet",
+						"v1",
+						"payments",
+						"otp"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "One step Merchant Payment",
+			"event": [
+				{
+					"listen": "prerequest",
+					"script": {
+						"exec": [
+							"function generateCorrelationId(){",
+							"    var dt = new Date().getTime();",
+							"    var uuid = 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {",
+							"        var r = (dt + Math.random()*16)%16 | 0;",
+							"        dt = Math.floor(dt/16);",
+							"        return (c=='x' ? r :(r&0x3|0x8)).toString(16);",
+							"    });",
+							"    return uuid;",
+							"}",
+							"pm.globals.set(\"CorrelationId\", generateCorrelationId());",
+							"console.log('generateCorrelationId => ', generateCorrelationId())"
+						],
+						"type": "text/javascript",
+						"packages": {}
+					}
+				},
+				{
+					"listen": "test",
+					"script": {
+						"exec": [
+							"function create_UUID(){",
+							"    var dt = new Date().getTime();",
+							"    var uuid = 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {",
+							"        var r = (dt + Math.random()*16)%16 | 0;",
+							"        dt = Math.floor(dt/16);",
+							"        return (c=='x' ? r :(r&0x3|0x8)).toString(16);",
+							"    });",
+							"    return uuid;",
+							"}",
+							"",
+							"console.log('create_UUID => ', create_UUID())"
+						],
+						"type": "text/javascript",
+						"packages": {}
+					}
+				}
+			],
+			"request": {
+				"auth": {
+					"type": "bearer",
+					"bearer": [
+						{
+							"key": "token",
+							"value": "{{TOKEN}}",
+							"type": "string"
+						}
+					]
+				},
+				"method": "POST",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json",
+						"type": "text"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n   \"customer\": {\n    \"idType\": \"MSISDN\",\n    \"id\": \"770998631\",\n    \"otp\": \"408834\"\n  },\n  \"partner\": {\n    \"idType\": \"CODE\",\n    \"id\": \"541409\"\n    },\n  \"amount\": {\n    \"value\": 50,\n    \"unit\": \"XOF\"\n  },\n  \"reference\" : \"{Correlation ID}\"\n}",
+					"options": {
+						"raw": {
+							"language": "json"
+						}
+					}
+				},
+				"url": {
+					"raw": "https://api.sandbox.orange-sonatel.com/api/eWallet/v1/payments/onestep",
+					"protocol": "https",
+					"host": [
+						"api",
+						"sandbox",
+						"orange-sonatel",
+						"com"
+					],
+					"path": [
+						"api",
+						"eWallet",
+						"v1",
+						"payments",
+						"onestep"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "Get merchant balance",
+			"request": {
+				"auth": {
+					"type": "bearer",
+					"bearer": [
+						{
+							"key": "token",
+							"value": "",
+							"type": "string"
+						}
+					]
+				},
+				"method": "POST",
+				"header": [],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n    \"idType\": \"MSISDN\",\n    \"id\": \"{numero marchand}\",\n    \"encryptedPinCode\": \"{code pin encrypté}\",\n    \"wallet\" : \"PRINCIPAL\"\n}",
+					"options": {
+						"raw": {
+							"language": "json"
+						}
+					}
+				},
+				"url": {
+					"raw": "https://api.sandbox.orange-sonatel.com/api/eWallet/v1/account/retailer/balance",
+					"protocol": "https",
+					"host": [
+						"api",
+						"sandbox",
+						"orange-sonatel",
+						"com"
+					],
+					"path": [
+						"api",
+						"eWallet",
+						"v1",
+						"account",
+						"retailer",
+						"balance"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "Get merchant profile by msisdn",
+			"event": [
+				{
+					"listen": "test",
+					"script": {
+						"exec": [
+							"const schemaAccountOM = {",
+							"    \"firstName\": \"xxxx\",",
+							"    \"lastName\": \"xxxxxxx\",",
+							"    \"userId\": \"xxxxxxxx\",",
+							"    \"balance\": {",
+							"        \"value\": 40.0,",
+							"        \"unit\": \"XOF\"",
+							"    },",
+							"    \"frozenBalance\": {",
+							"        \"value\": 0.0,",
+							"        \"unit\": \"XOF\"",
+							"    },",
+							"    \"suspendStatus\": \"No\",",
+							"    \"barred\": \"No\",",
+							"    \"identification\": null",
+							"};",
+							"",
+							"const accountOM = pm.response;",
+							"",
+							"pm.test(\"Status Code is 200\", function () {",
+							"  pm.response.to.have.status(200);",
+							"});",
+							"",
+							"",
+							"if (accountOM.code == 200) {",
+							"  tests[\"Schema accountOM is OK\"] = _.every(Object.keys(schemaAccountOM), _.partial(_.has, accountOM.json()));",
+							"",
+							" tests[\"Schema accountOM balance is OK\"] = _.every(Object.keys(schemaAccountOM.balance), _.partial(_.has, accountOM.json().balance));",
+							"",
+							"tests[\"Schema accountOM frozenBalance is OK\"] = _.every(Object.keys(schemaAccountOM.frozenBalance), _.partial(_.has, accountOM.json().frozenBalance));",
+							"}",
+							"",
+							"",
+							"",
+							"",
+							""
+						],
+						"type": "text/javascript"
+					}
+				}
+			],
+			"request": {
+				"auth": {
+					"type": "bearer",
+					"bearer": [
+						{
+							"key": "token",
+							"value": "",
+							"type": "string"
+						}
+					]
+				},
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "https://api.sandbox.orange-sonatel.com/api/eWallet/v1/account?msisdn={numéro marchand}&type=retailer",
+					"protocol": "https",
+					"host": [
+						"api",
+						"sandbox",
+						"orange-sonatel",
+						"com"
+					],
+					"path": [
+						"api",
+						"eWallet",
+						"v1",
+						"account"
+					],
+					"query": [
+						{
+							"key": "msisdn",
+							"value": "{numéro marchand}"
+						},
+						{
+							"key": "type",
+							"value": "retailer"
+						}
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "Get Customer profile by msisdn (Sandbox only)",
+			"event": [
+				{
+					"listen": "test",
+					"script": {
+						"exec": [
+							"const schemaAccountOM = {",
+							"    \"firstName\": \"xxxx\",",
+							"    \"lastName\": \"xxxxxxx\",",
+							"    \"userId\": \"xxxxxxxx\",",
+							"    \"balance\": {",
+							"        \"value\": 40.0,",
+							"        \"unit\": \"XOF\"",
+							"    },",
+							"    \"frozenBalance\": {",
+							"        \"value\": 0.0,",
+							"        \"unit\": \"XOF\"",
+							"    },",
+							"    \"suspendStatus\": \"No\",",
+							"    \"barred\": \"No\",",
+							"    \"identification\": null",
+							"};",
+							"",
+							"const accountOM = pm.response;",
+							"",
+							"pm.test(\"Status Code is 200\", function () {",
+							"  pm.response.to.have.status(200);",
+							"});",
+							"",
+							"",
+							"if (accountOM.code == 200) {",
+							"  tests[\"Schema accountOM is OK\"] = _.every(Object.keys(schemaAccountOM), _.partial(_.has, accountOM.json()));",
+							"",
+							" tests[\"Schema accountOM balance is OK\"] = _.every(Object.keys(schemaAccountOM.balance), _.partial(_.has, accountOM.json().balance));",
+							"",
+							"tests[\"Schema accountOM frozenBalance is OK\"] = _.every(Object.keys(schemaAccountOM.frozenBalance), _.partial(_.has, accountOM.json().frozenBalance));",
+							"}",
+							"",
+							"",
+							"",
+							"",
+							""
+						],
+						"type": "text/javascript"
+					}
+				}
+			],
+			"request": {
+				"auth": {
+					"type": "bearer",
+					"bearer": [
+						{
+							"key": "token",
+							"value": "",
+							"type": "string"
+						}
+					]
+				},
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "https://api.sandbox.orange-sonatel.com/api/eWallet/v1/account?msisdn={numéro client}&type=customer",
+					"protocol": "https",
+					"host": [
+						"api",
+						"sandbox",
+						"orange-sonatel",
+						"com"
+					],
+					"path": [
+						"api",
+						"eWallet",
+						"v1",
+						"account"
+					],
+					"query": [
+						{
+							"key": "msisdn",
+							"value": "{numéro client}"
+						},
+						{
+							"key": "type",
+							"value": "customer"
+						}
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "Change merchant pin code (Production only)",
+			"request": {
+				"auth": {
+					"type": "bearer",
+					"bearer": [
+						{
+							"key": "token",
+							"value": "",
+							"type": "string"
+						}
+					]
+				},
+				"method": "PATCH",
+				"header": [],
+				"body": {
+					"mode": "raw",
+					"raw": "{\r\n  \"encryptedPinCode\": \"{Old EncryptedPinCode}\",\r\n  \"encryptedNewPinCode\": \"New EncryptedPinCode\"\r\n}\r\n",
+					"options": {
+						"raw": {
+							"language": "json"
+						}
+					}
+				},
+				"url": {
+					"raw": "https://api.orange-sonatel.com/api/eWallet/v1/account?msisdn={call number}&type=retailer",
+					"protocol": "https",
+					"host": [
+						"api",
+						"orange-sonatel",
+						"com"
+					],
+					"path": [
+						"api",
+						"eWallet",
+						"v1",
+						"account"
+					],
+					"query": [
+						{
+							"key": "msisdn",
+							"value": "{call number}"
+						},
+						{
+							"key": "type",
+							"value": "retailer"
+						}
+					]
+				}
+			},
+			"response": []
+		}
+	],
+	"auth": {
+		"type": "oauth2",
+		"oauth2": [
+			{
+				"key": "addTokenTo",
+				"value": "header",
+				"type": "string"
+			}
+		]
+	},
+	"event": [
+		{
+			"listen": "prerequest",
+			"script": {
+				"type": "text/javascript",
+				"exec": [
+					""
+				]
+			}
+		},
+		{
+			"listen": "test",
+			"script": {
+				"type": "text/javascript",
+				"exec": [
+					""
+				]
+			}
+		}
+	]
+}

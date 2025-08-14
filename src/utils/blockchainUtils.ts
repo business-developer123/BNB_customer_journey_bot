@@ -1,8 +1,5 @@
 import dotenv from 'dotenv';
-import Moralis from 'moralis';
-import { LAMPORTS_PER_SOL, Keypair, PublicKey } from '@solana/web3.js';
-import { Connection, clusterApiUrl } from '@solana/web3.js';
-import { sendAndConfirmTransaction, SystemProgram, Transaction } from '@solana/web3.js';
+import { LAMPORTS_PER_SOL, Keypair, PublicKey, Connection, clusterApiUrl, sendAndConfirmTransaction, SystemProgram, Transaction } from '@solana/web3.js';
 import { createTransferInstruction, getOrCreateAssociatedTokenAccount, TOKEN_PROGRAM_ID } from '@solana/spl-token';
 import bs58 from 'bs58';
 import { getUserWalletPrivateKey } from '../services/walletService';
@@ -95,47 +92,32 @@ export async function getAllTokensInfoOfUserWallet(walletAddress: string): Promi
     const isTestnet = process.env.SOLANA_RPC_PROVIDER?.includes('devnet') || process.env.SOLANA_RPC_PROVIDER?.includes('devnet') || process.env.SOLANA_RPC_PROVIDER?.includes('data-seed-prebsc');
 
     console.log(`🔍 Network detection: RPC=${process.env.SOLANA_RPC_PROVIDER}, isTestnet=${isTestnet}`);
-
-    await Moralis.start({
-      apiKey: moralisApiKey
+    const connection = new Connection(process.env.SOLANA_RPC_PROVIDER || clusterApiUrl('mainnet-beta'));
+    const walletPublicKey = new PublicKey(walletAddress);
+    const tokenAccounts = await connection.getParsedTokenAccountsByOwner(walletPublicKey, {
+      programId: TOKEN_PROGRAM_ID
     });
 
-    const network = isTestnet ? "devnet" : "mainnet";
-    console.log(`🌐 Fetching native balance from ${network} for address: ${walletAddress}`);
-    
-    const responseNative = await Moralis.SolApi.account.getBalance({
-      "network": network,
-      "address": walletAddress
+    const tokenList = tokenAccounts.value.map(account => {
+      return {
+        mint: account.account.data.parsed.info.mint,
+        amount: account.account.data.parsed.info.tokenAmount.uiAmount,
+        decimals: account.account.data.parsed.info.tokenAmount.decimals
+      }
     });
-
-
 
     let tokens: any[] = [];
-    tokens.push({
-      token_address: "So11111111111111111111111111111111111111112",
-      symbol: "SOL",
-      name: "Solana",
-      balance: (Number(responseNative.result.solana) / LAMPORTS_PER_SOL).toString(),
+    const nonZeroTokens = tokenList.filter((token) => token.amount > 0);
+    tokens.push(({
+      token_address: 'So11111111111111111111111111111111111111112',
+      balance: await getWalletBalance(walletAddress),
       decimals: 9,
-    });
-
-    console.log(`🌐 Fetching SPL tokens from ${network} for address: ${walletAddress}`);
-    
-    const responseSPL = await Moralis.SolApi.account.getSPL({
-      "network": network,
-      "address": walletAddress,
-    });
-
-    // responseSPL is directly an array
-    const splTokens = responseSPL.toJSON()
-    splTokens.forEach((token: any) => {
+    }))
+    nonZeroTokens.forEach((token: any) => {
       tokens.push({
         token_address: token.mint,
-        symbol: token.symbol,
-        name: token.name,
         balance: token.amount,
         decimals: token.decimals,
-        price: token.amountRaw
       });
     });
 
@@ -204,7 +186,7 @@ export async function transferSPLToken(
     if (!isValidWalletAddress(tokenMintAddress)) {
       throw new Error('Invalid token mint address format');
     }
-    
+
     const numAmount = parseFloat(amount);
     if (isNaN(numAmount) || numAmount <= 0) {
       throw new Error('Invalid amount provided');
@@ -218,11 +200,11 @@ export async function transferSPLToken(
     const secretKey = Uint8Array.from(Buffer.from(privateKey, 'hex'));
     const senderKeypair = Keypair.fromSecretKey(secretKey);
     const connection = new Connection(process.env.SOLANA_RPC_PROVIDER || clusterApiUrl('mainnet-beta'));
-    
+
     const senderPubkey = senderKeypair.publicKey;
     const recipientPubkey = new PublicKey(recipientAddress);
     const mintPubkey = new PublicKey(tokenMintAddress);
-    
+
     // Get or create associated token accounts
     const senderTokenAccount = await getOrCreateAssociatedTokenAccount(
       connection,
@@ -230,17 +212,17 @@ export async function transferSPLToken(
       mintPubkey,
       senderPubkey
     );
-    
+
     const recipientTokenAccount = await getOrCreateAssociatedTokenAccount(
       connection,
       senderKeypair,
       mintPubkey,
       recipientPubkey
     );
-    
+
     // Convert amount to atomic units
     const atomicAmount = Math.round(numAmount * Math.pow(10, decimals));
-    
+
     // Create transfer instruction
     const transferInstruction = createTransferInstruction(
       senderTokenAccount.address,
@@ -250,12 +232,12 @@ export async function transferSPLToken(
       [],
       TOKEN_PROGRAM_ID
     );
-    
+
     // Create and send transaction
     const transaction = new Transaction().add(transferInstruction);
     const signature = await sendAndConfirmTransaction(connection, transaction, [senderKeypair]);
     const solscanLink = getSolscanLink(signature);
-    
+
     return {
       success: true,
       transactionHash: signature,
