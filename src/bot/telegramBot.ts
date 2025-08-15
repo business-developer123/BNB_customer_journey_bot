@@ -47,6 +47,12 @@ const userStates: {
     // Event states
     selectedEvent?: any;
     selectedCategory?: string;
+    // Orange Money payment states
+    pendingPurchase?: {
+      eventId: string;
+      category: string;
+      priceInXOF: number;
+    };
   }
 } = {};
 
@@ -63,6 +69,9 @@ function createMainMenuKeyboard() {
         [
           { text: '🖼️ My NFTs', callback_data: 'nfts' },
           { text: '🎫 Events', callback_data: 'events' }
+        ],
+        [
+          { text: '💳 Payment Methods', callback_data: 'payment_methods' }
         ],
         [
           { text: '🆕 Create Wallet', callback_data: 'create_wallet' },
@@ -268,6 +277,7 @@ async function handleHelp(msg: TelegramBot.Message) {
 • 👥 P2P transfers (send to @username or ID)
 • 🖼️ NFT collection management
 • 🎫 Event ticket system with blockchain validation
+• 💳 Multiple payment methods (Crypto + Orange Money)
 
 🎫 *Event Tickets:*
 • Purchase tickets as secure NFTs
@@ -439,6 +449,30 @@ async function handleCallbackQuery(query: TelegramBot.CallbackQuery) {
       await handleViewEventCallback(chatId, user, messageId, eventId);
       return;
     }
+    if (data.startsWith('select_payment_')) {
+      const parts = data.split('_');
+      const category = parts[parts.length - 1]; // Last part is always category
+      const eventId = parts.slice(2, -1).join('_'); // Everything between 'select_payment' and category
+      console.log(`🔍 select_payment_ callback received: data="${data}", extracted eventId="${eventId}", category="${category}"`);
+      await handleEventPaymentMethodSelectionCallback(chatId, user, messageId, eventId, category as 'VIP' | 'Standard' | 'Group');
+      return;
+    }
+    if (data.startsWith('purchase_ticket_crypto_')) {
+      const parts = data.split('_');
+      const category = parts[parts.length - 1]; // Last part is always category
+      const eventId = parts.slice(3, -1).join('_'); // Everything between 'purchase_ticket_crypto' and category
+      console.log(`🔍 purchase_ticket_crypto_ callback received: data="${data}", extracted eventId="${eventId}", category="${category}"`);
+      await handlePurchaseTicketCallback(chatId, user, messageId, eventId, category as 'VIP' | 'Standard' | 'Group');
+      return;
+    }
+    if (data.startsWith('purchase_ticket_om_')) {
+      const parts = data.split('_');
+      const category = parts[parts.length - 1]; // Last part is always category
+      const eventId = parts.slice(3, -1).join('_'); // Everything between 'purchase_ticket_om' and category
+      console.log(`🔍 purchase_ticket_om_ callback received: data="${data}", extracted eventId="${eventId}", category="${category}"`);
+      await handleOrangeMoneyTicketPurchaseCallback(chatId, user, messageId, eventId, category as 'VIP' | 'Standard' | 'Group');
+      return;
+    }
     if (data.startsWith('purchase_ticket_')) {
       // Fix: Extract category from the end and eventId from the middle
       const parts = data.split('_');
@@ -461,6 +495,26 @@ async function handleCallbackQuery(query: TelegramBot.CallbackQuery) {
     if (data.startsWith('debug_event_')) {
       const eventId = data.replace('debug_event_', '');
       await handleDebugSpecificEventCallback(chatId, user, messageId, eventId);
+      return;
+    }
+    if (data.startsWith('payment_method_')) {
+      const methodId = data.replace('payment_method_', '');
+      await handlePaymentMethodSelectionCallback(chatId, user, messageId, methodId);
+      return;
+    }
+    if (data.startsWith('om_confirm_ticket_')) {
+      const parts = data.split('_');
+      const eventId = parts[3];
+      const category = parts[4];
+      const phoneNumber = parts[5];
+      console.log(`🔍 om_confirm_ticket_ callback received: eventId="${eventId}", category="${category}", phone="${phoneNumber}"`);
+      await handleOrangeMoneyTicketConfirmation(chatId, user, messageId, eventId, category, phoneNumber);
+      return;
+    }
+    if (data.startsWith('om_confirm_')) {
+      const amountStr = data.replace('om_confirm_', '');
+      const amount = parseFloat(amountStr);
+      await handleOrangeMoneyPaymentConfirmation(chatId, user, messageId, amount);
       return;
     }
     // Always ack callback quickly to avoid Telegram 400 (query timeout)
@@ -541,6 +595,9 @@ async function handleCallbackQuery(query: TelegramBot.CallbackQuery) {
         break;
       case 'admin_fix_events':
         await handleAdminFixEventsCallback(chatId, user, messageId);
+        break;
+      case 'payment_methods':
+        await handlePaymentMethodsCallback(chatId, user, messageId);
         break;
       default:
         await bot.answerCallbackQuery(query.id, { text: 'Unknown command' });
@@ -2994,6 +3051,12 @@ function setupBotHandlers() {
           const { message_id } = await bot.sendMessage(msg.chat.id, '🔄 Updating quote...');
           await handleMarketQuote(msg.chat.id, user, message_id, inp, outp);
           return;
+        } else if (userState.state === 'om_entering_amount') {
+          await handleOrangeMoneyAmountInput(msg);
+          return;
+        } else if (userState.state === 'om_entering_phone') {
+          await handleOrangeMoneyPhoneInput(msg);
+          return;
         }
       }
       handleUnknownCommand(msg);
@@ -3660,11 +3723,11 @@ async function handleViewEventCallback(chatId: number, user: TelegramBot.User, m
       eventMessage += `• **${cat.category}**: ${cat.price} SOL - ${available}/${total} available ${status}\n`;
 
       if (available > 0) {
-        const callbackData = `purchase_ticket_${eventId}_${cat.category}`;
-        console.log(`🔗 Creating buy button for "${event.name}" - ${cat.category} with callback_data: "${callbackData}"`);
+        const callbackData = `select_payment_${eventId}_${cat.category}`;
+        console.log(`🔗 Creating payment method selection button for "${event.name}" - ${cat.category} with callback_data: "${callbackData}"`);
 
         ticketButtons.push([{
-          text: `🎫 Buy ${cat.category} (${cat.price} SOL)`,
+          text: `💳 Select Payment Method - ${cat.category} (${cat.price} SOL)`,
           callback_data: callbackData
         }]);
       }
@@ -3694,7 +3757,82 @@ async function handleViewEventCallback(chatId: number, user: TelegramBot.User, m
   }
 }
 
-// Handle Purchase Ticket callback
+// Handle Event Payment Method Selection callback
+async function handleEventPaymentMethodSelectionCallback(chatId: number, user: TelegramBot.User, messageId: number, eventId: string, category: 'VIP' | 'Standard' | 'Group') {
+  try {
+    console.log(`🔍 Payment method selection for event: ${eventId}, category: ${category}`);
+
+    const { getEvent } = await import('../services/nftService');
+    const event = await getEvent(eventId);
+
+    if (!event) {
+      await bot.editMessageText('❌ Event not found.', {
+        chat_id: chatId,
+        message_id: messageId,
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: '🔙 Back to Events', callback_data: 'event_list' }]
+          ]
+        }
+      });
+      return;
+    }
+
+    const categoryData = event?.categories.find(cat => cat.category === category);
+    if (!categoryData) {
+      await bot.editMessageText('❌ Ticket category not found.', {
+        chat_id: chatId,
+        message_id: messageId,
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: '🔙 Back to Event', callback_data: `view_event_${eventId}` }]
+          ]
+        }
+      });
+      return;
+    }
+
+    const message = `💳 *Select Payment Method*\n\n` +
+      `🎫 **Event:** ${event.name}\n` +
+      `🏷️ **Category:** ${category}\n` +
+      `💰 **Price:** ${categoryData.price} SOL\n\n` +
+      `Choose how you would like to pay:`;
+
+    const keyboard = {
+      reply_markup: {
+        inline_keyboard: [
+          [
+            { text: '₿ Crypto (SOL)', callback_data: `purchase_ticket_crypto_${eventId}_${category}` },
+            { text: '🍊 Orange Money', callback_data: `purchase_ticket_om_${eventId}_${category}` }
+          ],
+          [
+            { text: '🔙 Back to Event', callback_data: `view_event_${eventId}` }
+          ]
+        ]
+      }
+    };
+
+    await bot.editMessageText(message, {
+      chat_id: chatId,
+      message_id: messageId,
+      parse_mode: 'Markdown',
+      reply_markup: keyboard.reply_markup
+    });
+  } catch (error) {
+    console.error('Error handling payment method selection:', error);
+    await bot.editMessageText('❌ Error loading payment methods. Please try again.', {
+      chat_id: chatId,
+      message_id: messageId,
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: '🔙 Back to Events', callback_data: 'event_list' }]
+        ]
+      }
+    });
+  }
+}
+
+// Handle Purchase Ticket callback (Crypto)
 async function handlePurchaseTicketCallback(chatId: number, user: TelegramBot.User, messageId: number, eventId: string, category: 'VIP' | 'Standard' | 'Group') {
   try {
     console.log(`🔍 Attempting to purchase ticket for event: ${eventId}, category: ${category}`);
@@ -3822,7 +3960,7 @@ async function handlePurchaseTicketCallback(chatId: number, user: TelegramBot.Us
           reply_markup: {
             inline_keyboard: [
               [
-                { text: '🔄 Try Again', callback_data: `purchase_ticket_${eventId}_${category}` },
+                { text: '🔄 Try Again', callback_data: `purchase_ticket_crypto_${eventId}_${category}` },
                 { text: '🔙 Back to Event', callback_data: `view_event_${eventId}` }
               ]
             ]
@@ -3833,6 +3971,104 @@ async function handlePurchaseTicketCallback(chatId: number, user: TelegramBot.Us
   } catch (error) {
     console.error('Error handling purchase ticket callback:', error);
     await bot.editMessageText('❌ Error processing ticket purchase. Please try again.', {
+      chat_id: chatId,
+      message_id: messageId,
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: '🔙 Back to Event', callback_data: `view_event_${eventId}` }]
+        ]
+      }
+    });
+  }
+}
+
+// Handle Orange Money Ticket Purchase callback
+async function handleOrangeMoneyTicketPurchaseCallback(chatId: number, user: TelegramBot.User, messageId: number, eventId: string, category: 'VIP' | 'Standard' | 'Group') {
+  try {
+    console.log(`🔍 Attempting Orange Money ticket purchase for event: ${eventId}, category: ${category}`);
+
+    const { getEvent } = await import('../services/nftService');
+    const { isConfigured: isOMConfigured, getCustomerBalance } = await import('../services/orangeMoneyService');
+    
+    const event = await getEvent(eventId);
+    if (!event) {
+      await bot.editMessageText('❌ Event not found.', {
+        chat_id: chatId,
+        message_id: messageId,
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: '🔙 Back to Events', callback_data: 'event_list' }]
+          ]
+        }
+      });
+      return;
+    }
+
+    const categoryData = event?.categories.find(cat => cat.category === category);
+    if (!categoryData) {
+      await bot.editMessageText('❌ Ticket category not found.', {
+        chat_id: chatId,
+        message_id: messageId,
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: '🔙 Back to Event', callback_data: `view_event_${eventId}` }]
+          ]
+        }
+      });
+      return;
+    }
+
+    // Check if Orange Money is configured
+    if (!isOMConfigured()) {
+      await bot.editMessageText('❌ Orange Money is not configured. Please contact support.', {
+        chat_id: chatId,
+        message_id: messageId,
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: '🔙 Back to Event', callback_data: `view_event_${eventId}` }]
+          ]
+        }
+      });
+      return;
+    }
+
+    // Convert SOL price to XOF (approximate conversion)
+    const solToXOF = 50000; // 1 SOL ≈ 50,000 XOF (approximate)
+    const priceInXOF = Math.round(categoryData.price * solToXOF);
+
+    const message = `🍊 *Orange Money Payment*\n\n` +
+      `🎫 **Event:** ${event.name}\n` +
+      `🏷️ **Category:** ${category}\n` +
+      `💰 **Price:** ${categoryData.price} SOL (≈ ${priceInXOF.toLocaleString()} XOF)\n\n` +
+      `Please enter your phone number (Orange Money account):\n\n` +
+      `📱 **Format:** 221XXXXXXXX (Senegal)\n` +
+      `💡 **Example:** 221701234567\n\n` +
+      `ℹ️ **Note:** Money will be transferred from your OM wallet to the event organizer's wallet.`;
+
+    // Set user state for Orange Money payment
+    if (!userStates[user.id]) userStates[user.id] = { state: '' };
+    userStates[user.id].state = 'om_entering_phone';
+    userStates[user.id].pendingPurchase = { eventId, category, priceInXOF };
+
+    const keyboard = {
+      reply_markup: {
+        inline_keyboard: [
+          [
+            { text: '🔙 Back to Event', callback_data: `view_event_${eventId}` }
+          ]
+        ]
+      }
+    };
+
+    await bot.editMessageText(message, {
+      chat_id: chatId,
+      message_id: messageId,
+      parse_mode: 'Markdown',
+      reply_markup: keyboard.reply_markup
+    });
+  } catch (error) {
+    console.error('Error handling Orange Money ticket purchase:', error);
+    await bot.editMessageText('❌ Error processing Orange Money payment. Please try again.', {
       chat_id: chatId,
       message_id: messageId,
       reply_markup: {
@@ -4508,6 +4744,491 @@ async function handleNFTListCallback(chatId: number, user: TelegramBot.User, mes
   }
 }
 
+// Handle Payment Methods callback
+async function handlePaymentMethodsCallback(chatId: number, user: TelegramBot.User, messageId: number) {
+  try {
+    const { getAvailablePaymentMethods, getPaymentConfig, getOrangeMoneyStatus } = await import('../services/paymentService');
+    const availableMethods = await getAvailablePaymentMethods(user.id);
+    const config = getPaymentConfig();
+    const omStatus = getOrangeMoneyStatus();
+
+    let message = `💳 *Payment Methods*\n\n`;
+    message += `Choose your preferred payment method:\n\n`;
+
+    availableMethods.forEach((method: any, index: any) => {
+      const status = method.enabled ? '✅' : '❌';
+      message += `${index + 1}. ${method.icon} **${method.name}** ${status}\n`;
+      message += `   ${method.description}\n\n`;
+    });
+
+    // Add configuration status
+    if (config.orangeMoney.enabled) {
+      message += `🟠 **Orange Money Status:** ✅ Configured\n`;
+      message += `   • Min Amount: ${config.orangeMoney.minAmount} XOF\n`;
+      message += `   • Max Amount: ${config.orangeMoney.maxAmount.toLocaleString()} XOF\n`;
+    } else {
+      message += `🟠 **Orange Money Status:** ❌ Not Configured\n`;
+      if (omStatus.missing.length > 0) {
+        message += `   • Missing: ${omStatus.missing.join(', ')}\n`;
+      }
+    }
+
+    message += `\n💰 **Crypto Status:** ✅ Available\n`;
+    message += `   • Network: ${config.crypto.network}\n`;
+    message += `   • Tokens: ${config.crypto.supportedTokens.join(', ')}\n`;
+
+    const keyboard = {
+      reply_markup: {
+        inline_keyboard: [
+          ...availableMethods.map((method: any, index: any) => [{
+            text: `${method.icon} ${method.name}`,
+            callback_data: `payment_method_${method.id}`
+          }]),
+          [
+            { text: '🔧 Configure Orange Money', callback_data: 'configure_om' },
+            { text: '📊 Payment Status', callback_data: 'payment_status' }
+          ],
+          [{ text: '🔙 Back to Main Menu', callback_data: 'main_menu' }]
+        ]
+      }
+    };
+
+    await bot.editMessageText(message, {
+      chat_id: chatId,
+      message_id: messageId,
+      parse_mode: 'Markdown',
+      reply_markup: keyboard.reply_markup
+    });
+  } catch (error) {
+    console.error('Error handling payment methods callback:', error);
+    await bot.editMessageText('❌ Error loading payment methods. Please try again.', {
+      chat_id: chatId,
+      message_id: messageId,
+      reply_markup: createMainMenuKeyboard().reply_markup
+    });
+  }
+}
+
+// Handle Payment Method Selection callback
+async function handlePaymentMethodSelectionCallback(chatId: number, user: TelegramBot.User, messageId: number, methodId: string) {
+  try {
+    if (methodId === 'orange_money') {
+      await handleOrangeMoneyPaymentCallback(chatId, user, messageId);
+    } else if (methodId === 'crypto') {
+      await handleCryptoPaymentCallback(chatId, user, messageId);
+    } else {
+      await bot.editMessageText('❌ Invalid payment method selected.', {
+        chat_id: chatId,
+        message_id: messageId,
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: '🔙 Back to Payment Methods', callback_data: 'payment_methods' }]
+          ]
+        }
+      });
+    }
+  } catch (error) {
+    console.error('Error handling payment method selection:', error);
+    await bot.editMessageText('❌ Error processing payment method selection. Please try again.', {
+      chat_id: chatId,
+      message_id: messageId,
+      reply_markup: createMainMenuKeyboard().reply_markup
+    });
+  }
+}
+
+// Handle Orange Money Phone Input
+async function handleOrangeMoneyPhoneInput(msg: TelegramBot.Message) {
+  try {
+    const user = msg.from;
+    if (!user) return;
+
+    const phoneNumber = msg.text!.trim();
+    
+    // Basic phone number validation for Senegal format
+    // Phone number must be exactly 10 digits
+    if (phoneNumber.length !== 9) {
+      await bot.sendMessage(msg.chat.id, 
+        '❌ *Invalid Phone Number*\n\n' +
+        'Please enter your phone number in Senegal format (9 digits)\n' +
+        '💡 **Example:** 771899696\n\n' +
+        'Phone number must be exactly 9 digits long',
+        { parse_mode: 'Markdown' }
+      );
+      return;
+    }
+
+    const userState = userStates[user.id];
+    if (!userState?.pendingPurchase) {
+      await bot.sendMessage(msg.chat.id, '❌ No pending purchase found. Please try again.');
+      return;
+    }
+
+    const { eventId, category, priceInXOF } = userState.pendingPurchase;
+
+    // Get event details for confirmation
+    const { getEvent } = await import('../services/nftService');
+    const { getCustomerBalance } = await import('../services/orangeMoneyService');
+    const event = await getEvent(eventId);
+    
+    if (!event) {
+      await bot.sendMessage(msg.chat.id, '❌ Event not found. Please try again.');
+      return;
+    }
+
+    // Check user's OM wallet balance
+    let balanceMessage = '';
+    try {
+      const balanceResponse = await getCustomerBalance(phoneNumber);
+      if (balanceResponse && balanceResponse.balance) {
+        const userBalance = balanceResponse.balance.value || 0;
+        const balanceUnit = balanceResponse.balance.unit || 'XOF';
+        
+        if (userBalance < priceInXOF) {
+          await bot.sendMessage(msg.chat.id, 
+            `❌ *Insufficient Orange Money Balance*\n\n` +
+            `💰 **Required:** ${priceInXOF.toLocaleString()} XOF\n` +
+            `💳 **Your Balance:** ${userBalance.toLocaleString()} ${balanceUnit}\n\n` +
+            `Please top up your Orange Money wallet and try again.`,
+            { parse_mode: 'Markdown' }
+          );
+          return;
+        }
+        
+        balanceMessage = `💳 **Your OM Balance:** ${userBalance.toLocaleString()} ${balanceUnit}\n`;
+      } else {
+        balanceMessage = `💳 **Your OM Balance:** Unable to retrieve (will proceed with payment)\n`;
+      }
+    } catch (balanceError) {
+      console.log('Could not retrieve OM balance, proceeding with payment:', balanceError);
+      balanceMessage = `💳 **Your OM Balance:** Unable to retrieve (will proceed with payment)\n`;
+    }
+
+    const message = `🍊 *Orange Money Payment Confirmation*\n\n` +
+      `🎫 **Event:** ${event.name}\n` +
+      `🏷️ **Category:** ${category}\n` +
+      `💰 **Amount:** ${priceInXOF.toLocaleString()} XOF\n` +
+      `📱 **Phone:** ${phoneNumber}\n` +
+      `${balanceMessage}\n` +
+      `Please confirm the payment details above.`;
+
+    const keyboard = {
+      reply_markup: {
+        inline_keyboard: [
+          [
+            { text: '✅ Confirm Payment', callback_data: `om_confirm_ticket_${eventId}_${category}_${phoneNumber}` },
+            { text: '❌ Cancel', callback_data: `view_event_${eventId}` }
+          ]
+        ]
+      }
+    };
+
+    // Clear the pending purchase state
+    userStates[user.id].pendingPurchase = undefined;
+    userStates[user.id].state = '';
+
+    await bot.sendMessage(msg.chat.id, message, {
+      parse_mode: 'Markdown',
+      reply_markup: keyboard.reply_markup
+    });
+  } catch (error) {
+    console.error('Error handling Orange Money phone input:', error);
+    await bot.sendMessage(msg.chat.id, '❌ Error processing phone number. Please try again.');
+  }
+}
+
+// Handle Orange Money Ticket Confirmation
+async function handleOrangeMoneyTicketConfirmation(chatId: number, user: TelegramBot.User, messageId: number, eventId: string, category: string, phoneNumber: string) {
+  try {
+    console.log(`🔍 Processing Orange Money ticket confirmation for event: ${eventId}, category: ${category}, phone: ${phoneNumber}`);
+
+    const { getEvent } = await import('../services/nftService');
+    const { processEventPurchase } = await import('../services/orangeMoneyService');
+    
+    const event = await getEvent(eventId);
+    if (!event) {
+      await bot.editMessageText('❌ Event not found.', {
+        chat_id: chatId,
+        message_id: messageId,
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: '🔙 Back to Events', callback_data: 'event_list' }]
+          ]
+        }
+      });
+      return;
+    }
+
+    const categoryData = event?.categories.find(cat => cat.category === category);
+    if (!categoryData) {
+      await bot.editMessageText('❌ Ticket category not found.', {
+        chat_id: chatId,
+        message_id: messageId,
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: '🔙 Back to Event', callback_data: `view_event_${eventId}` }]
+          ]
+        }
+      });
+      return;
+    }
+
+    // Convert SOL price to XOF (approximate conversion)
+    const solToXOF = 50000; // 1 SOL ≈ 50,000 XOF (approximate)
+    const priceInXOF = Math.round(categoryData.price * solToXOF);
+
+    // Show processing message
+    await bot.editMessageText('🔄 *Processing Orange Money Payment...*\n\nPlease wait while we process your payment.', {
+      chat_id: chatId,
+      message_id: messageId,
+      parse_mode: 'Markdown'
+    });
+
+    try {
+      // Process the Orange Money payment using processEventPurchase
+      const purchaseRequest = {
+        customerPhone: phoneNumber,
+        amount: priceInXOF,
+        eventId: eventId,
+        eventName: event.name,
+        customerName: user.first_name || user.username || 'Unknown'
+      };
+
+      const result = await processEventPurchase(purchaseRequest);
+
+      if (result.status === 'SUCCESS' || result.status === 'PENDING') {
+        // Payment successful, now mint the ticket NFT
+        const { purchaseTicket } = await import('../services/nftService');
+        const ticketResult = await purchaseTicket(user.id, eventId, category as 'VIP' | 'Standard' | 'Group');
+
+        if (ticketResult.success) {
+          await bot.editMessageText(
+            `🎉 *Orange Money Payment & Ticket Purchase Successful!*\n\n` +
+            `🎫 **Event:** ${event.name}\n` +
+            `🏷️ **Category:** ${category}\n` +
+            `💰 **Amount Paid:** ${priceInXOF.toLocaleString()} XOF\n` +
+            `📱 **Phone:** ${phoneNumber}\n` +
+            `🔗 **Ticket NFT:** \`${ticketResult.mintAddress ? truncateAddress(ticketResult.mintAddress) : 'N/A'}\`\n\n` +
+            `✅ Your payment has been processed and your ticket NFT has been minted!\n\n` +
+            `📋 **Transaction Details:**\n` +
+            `• Reference: ${result.reference}\n` +
+            `• Transaction ID: ${result.transactionId}\n` +
+            `• Status: ${result.status}`,
+            {
+              chat_id: chatId,
+              message_id: messageId,
+              parse_mode: 'Markdown',
+              reply_markup: {
+                inline_keyboard: [
+                  [
+                    { text: '🎫 My Tickets', callback_data: 'my_tickets' },
+                    { text: '🔙 Back to Event', callback_data: `view_event_${eventId}` }
+                  ]
+                ]
+              }
+            }
+          );
+        } else {
+          // Payment succeeded but ticket minting failed
+          await bot.editMessageText(
+            `⚠️ *Payment Successful but Ticket Creation Failed*\n\n` +
+            `💰 **Payment:** ${priceInXOF.toLocaleString()} XOF - ✅ Success\n` +
+            `🎫 **Ticket:** ❌ Failed - ${ticketResult.error}\n\n` +
+            `Please contact support with your payment reference: ${result.reference}`,
+            {
+              chat_id: chatId,
+              message_id: messageId,
+              parse_mode: 'Markdown',
+              reply_markup: {
+                inline_keyboard: [
+                  [
+                    { text: '🔙 Back to Event', callback_data: `view_event_${eventId}` }
+                  ]
+                ]
+              }
+            }
+          );
+        }
+      } else {
+        // Payment failed
+        await bot.editMessageText(
+          `❌ *Orange Money Payment Failed*\n\n` +
+          `💰 **Amount:** ${priceInXOF.toLocaleString()} XOF\n` +
+          `📱 **Phone:** ${phoneNumber}\n` +
+          `❌ **Status:** ${result.status}\n` +
+          `📝 **Description:** ${result.description || 'Unknown error'}\n\n` +
+          `Please try again or contact support if the issue persists.`,
+          {
+            chat_id: chatId,
+            message_id: messageId,
+            parse_mode: 'Markdown',
+            reply_markup: {
+              inline_keyboard: [
+                [
+                  { text: '🔄 Try Again', callback_data: `purchase_ticket_om_${eventId}_${category}` },
+                  { text: '🔙 Back to Event', callback_data: `view_event_${eventId}` }
+                ]
+              ]
+            }
+          }
+        );
+      }
+    } catch (paymentError) {
+      console.error('Orange Money payment error:', paymentError);
+      await bot.editMessageText(
+        `❌ *Orange Money Payment Error*\n\n` +
+        `💰 **Amount:** ${priceInXOF.toLocaleString()} XOF\n` +
+        `📱 **Phone:** ${phoneNumber}\n` +
+        `❌ **Error:** ${paymentError instanceof Error ? paymentError.message : 'Unknown error'}\n\n` +
+        `Please try again or contact support if the issue persists.`,
+        {
+          chat_id: chatId,
+          message_id: messageId,
+          parse_mode: 'Markdown',
+          reply_markup: {
+            inline_keyboard: [
+              [
+                { text: '🔄 Try Again', callback_data: `purchase_ticket_om_${eventId}_${category}` },
+                { text: '🔙 Back to Event', callback_data: `view_event_${eventId}` }
+              ]
+            ]
+          }
+        }
+      );
+    }
+  } catch (error) {
+    console.error('Error handling Orange Money ticket confirmation:', error);
+    await bot.editMessageText('❌ Error processing payment confirmation. Please try again.', {
+      chat_id: chatId,
+      message_id: messageId,
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: '🔙 Back to Event', callback_data: `view_event_${eventId}` }]
+        ]
+      }
+    });
+  }
+}
+
+// Handle Orange Money Payment callback
+async function handleOrangeMoneyPaymentCallback(chatId: number, user: TelegramBot.User, messageId: number) {
+  try {
+    const { isOrangeMoneyAvailable } = await import('../services/paymentService');
+    
+    if (!isOrangeMoneyAvailable()) {
+      await bot.editMessageText('❌ Orange Money is not available. Please configure it first.', {
+        chat_id: chatId,
+        message_id: messageId,
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: '🔧 Configure Orange Money', callback_data: 'configure_om' }],
+            [{ text: '🔙 Back to Payment Methods', callback_data: 'payment_methods' }]
+          ]
+        }
+      });
+      return;
+    }
+
+    // Set user state for Orange Money payment
+    if (!userStates[user.id]) userStates[user.id] = { state: '' };
+    userStates[user.id].state = 'om_entering_amount';
+
+    const message = `🟠 *Orange Money Payment*\n\n` +
+      `Please enter the amount in XOF (West African CFA franc):\n\n` +
+      `💰 **Amount Range:** 100 - 1,000,000 XOF\n` +
+      `💡 **Examples:** 1000, 5000, 10000\n\n` +
+      `_Send the amount as a number_`;
+
+    const keyboard = {
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: '🔙 Back to Payment Methods', callback_data: 'payment_methods' }]
+        ]
+      }
+    };
+
+    await bot.editMessageText(message, {
+      chat_id: chatId,
+      message_id: messageId,
+      parse_mode: 'Markdown',
+      reply_markup: keyboard.reply_markup
+    });
+  } catch (error) {
+    console.error('Error handling Orange Money payment callback:', error);
+    await bot.editMessageText('❌ Error starting Orange Money payment. Please try again.', {
+      chat_id: chatId,
+      message_id: messageId,
+      reply_markup: createMainMenuKeyboard().reply_markup
+    });
+  }
+}
+
+// Handle Crypto Payment callback
+async function handleCryptoPaymentCallback(chatId: number, user: TelegramBot.User, messageId: number) {
+  try {
+    const { hasWallet } = await import('../services/userService');
+    
+    const hasExistingWallet = await hasWallet(user.id);
+    
+    if (!hasExistingWallet) {
+      await bot.editMessageText('❌ You need a crypto wallet to use crypto payments.\n\nPlease create or import a wallet first.', {
+        chat_id: chatId,
+        message_id: messageId,
+        reply_markup: {
+          inline_keyboard: [
+            [
+              { text: '🆕 Create Wallet', callback_data: 'create_wallet' },
+              { text: '📥 Import Wallet', callback_data: 'import_wallet' }
+            ],
+            [{ text: '🔙 Back to Payment Methods', callback_data: 'payment_methods' }]
+          ]
+        }
+      });
+      return;
+    }
+
+    const message = `💰 *Crypto Payment*\n\n` +
+      `Your crypto wallet is ready for payments!\n\n` +
+      `🎯 **Available for:**\n` +
+      `• Event ticket purchases\n` +
+      `• NFT purchases\n` +
+      `• Trading operations\n\n` +
+      `💡 **How to use:**\n` +
+      `• Go to Events to buy tickets\n` +
+      `• Use Market & Trading for swaps\n` +
+      `• All crypto operations use your wallet automatically`;
+
+    const keyboard = {
+      reply_markup: {
+        inline_keyboard: [
+          [
+            { text: '🎫 Browse Events', callback_data: 'events' },
+            { text: '📈 Market & Trading', callback_data: 'market' }
+          ],
+          [
+            { text: '💰 Wallet', callback_data: 'wallet' },
+            { text: '🔙 Back to Payment Methods', callback_data: 'payment_methods' }
+          ]
+        ]
+      }
+    };
+
+    await bot.editMessageText(message, {
+      chat_id: chatId,
+      message_id: messageId,
+      parse_mode: 'Markdown',
+      reply_markup: keyboard.reply_markup
+    });
+  } catch (error) {
+    console.error('Error handling crypto payment callback:', error);
+    await bot.editMessageText('❌ Error processing crypto payment. Please try again.', {
+      chat_id: chatId,
+      message_id: messageId,
+      reply_markup: createMainMenuKeyboard().reply_markup
+    });
+  }
+}
+
 // Handle NFT Transfer callback
 async function handleNFTTransferCallback(chatId: number, user: TelegramBot.User, messageId: number) {
   try {
@@ -4562,6 +5283,185 @@ async function handleNFTTransferCallback(chatId: number, user: TelegramBot.User,
         ]
       }
     });
+  }
+}
+
+// Handle Orange Money payment confirmation
+async function handleOrangeMoneyPaymentConfirmation(chatId: number, user: TelegramBot.User, messageId: number, amount: number) {
+  try {
+    if (!userStates[user.id] || userStates[user.id].state !== 'om_confirming_payment') {
+      await bot.editMessageText('❌ Session expired. Please start Orange Money payment again.', {
+        chat_id: chatId,
+        message_id: messageId,
+        reply_markup: createMainMenuKeyboard().reply_markup
+      });
+      return;
+    }
+
+    // Show processing message
+    await bot.editMessageText('🔄 *Processing Orange Money Payment...*\n\nPlease wait while we process your transaction.', {
+      chat_id: chatId,
+      message_id: messageId,
+      parse_mode: 'Markdown'
+    });
+
+    // Process the payment
+    const { processPayment } = await import('../services/paymentService');
+    const paymentRequest = {
+      userId: user.id,
+      amount: amount,
+      currency: 'XOF' as const,
+      description: 'Orange Money Cash-in',
+      reference: `OM_${Date.now()}`,
+      paymentMethod: 'orange_money'
+    };
+
+    const result = await processPayment(paymentRequest);
+
+    if (result.success) {
+      const successMessage = `✅ *Orange Money Payment Successful!*\n\n` +
+        `💰 **Amount:** ${amount.toLocaleString()} XOF\n` +
+        `💳 **Payment Method:** Orange Money\n` +
+        `🔗 **Transaction ID:** \`${result.transactionId}\`\n` +
+        `📋 **Reference:** \`${result.reference}\`\n\n` +
+        `🎉 Your payment has been processed successfully!\n` +
+        `The amount has been added to your Orange Money account.`;
+
+      const keyboard = {
+        reply_markup: {
+          inline_keyboard: [
+            [
+              { text: '💳 Another Payment', callback_data: 'payment_methods' },
+              { text: '🎫 Browse Events', callback_data: 'events' }
+            ],
+            [
+              { text: '💰 Wallet', callback_data: 'wallet' },
+              { text: '🔙 Main Menu', callback_data: 'main_menu' }
+            ]
+          ]
+        }
+      };
+
+      await bot.editMessageText(successMessage, {
+        chat_id: chatId,
+        message_id: messageId,
+        parse_mode: 'Markdown',
+        reply_markup: keyboard.reply_markup
+      });
+    } else {
+      const errorMessage = `❌ *Orange Money Payment Failed*\n\n` +
+        `💰 **Amount:** ${amount.toLocaleString()} XOF\n` +
+        `💳 **Payment Method:** Orange Money\n` +
+        `❌ **Error:** ${result.error || 'Unknown error'}\n\n` +
+        `Please try again or contact support if the issue persists.`;
+
+      const keyboard = {
+        reply_markup: {
+          inline_keyboard: [
+            [
+              { text: '🔄 Try Again', callback_data: 'payment_methods' },
+              { text: '❓ Help', callback_data: 'help' }
+            ],
+            [{ text: '🔙 Main Menu', callback_data: 'main_menu' }]
+          ]
+        }
+      };
+
+      await bot.editMessageText(errorMessage, {
+        chat_id: chatId,
+        message_id: messageId,
+        parse_mode: 'Markdown',
+        reply_markup: keyboard.reply_markup
+      });
+    }
+
+    // Clear user state
+    if (userStates[user.id]) {
+      userStates[user.id].state = '';
+      if (userStates[user.id].data) {
+        userStates[user.id].data.omAmount = undefined;
+      }
+    }
+  } catch (error) {
+    console.error('Error handling Orange Money payment confirmation:', error);
+    await bot.editMessageText('❌ Error processing Orange Money payment. Please try again.', {
+      chat_id: chatId,
+      message_id: messageId,
+      reply_markup: createMainMenuKeyboard().reply_markup
+    });
+  }
+}
+
+// Handle Orange Money amount input
+async function handleOrangeMoneyAmountInput(msg: TelegramBot.Message) {
+  const chatId = msg.chat.id;
+  const user = msg.from;
+  const amount = msg.text?.trim();
+
+  if (!user || !amount) {
+    await bot.sendMessage(chatId, '❌ Invalid amount. Please try again.');
+    return;
+  }
+
+  try {
+    if (!userStates[user.id] || userStates[user.id].state !== 'om_entering_amount') {
+      await bot.sendMessage(chatId, '❌ Session expired. Please start Orange Money payment again.', {
+        reply_markup: createMainMenuKeyboard().reply_markup
+      });
+      return;
+    }
+
+    const amountXOF = parseFloat(amount);
+    if (isNaN(amountXOF) || amountXOF <= 0) {
+      await bot.sendMessage(chatId, '❌ Invalid amount. Please enter a positive number.');
+      return;
+    }
+
+    // Validate amount range (100 - 1,000,000 XOF)
+    if (amountXOF < 100) {
+      await bot.sendMessage(chatId, '❌ Amount too low. Minimum amount is 100 XOF.');
+      return;
+    }
+
+    if (amountXOF > 1000000) {
+      await bot.sendMessage(chatId, '❌ Amount too high. Maximum amount is 1,000,000 XOF.');
+      return;
+    }
+
+    // Store amount in user state
+    if (!userStates[user.id].data) userStates[user.id].data = {};
+    userStates[user.id].data.omAmount = amountXOF;
+    userStates[user.id].state = 'om_confirming_payment';
+
+    // Show confirmation message
+    const message = `🟠 *Orange Money Payment Confirmation*\n\n` +
+      `💰 **Amount:** ${amountXOF.toLocaleString()} XOF\n` +
+      `💳 **Payment Method:** Orange Money\n` +
+      `👤 **User:** ${user.first_name || user.username || 'User'}\n\n` +
+      `⚠️ **Important:**\n` +
+      `• This will process a cash-in transaction\n` +
+      `• Amount will be added to your Orange Money account\n` +
+      `• Transaction is irreversible\n\n` +
+      `Please confirm the payment:`;
+
+    const keyboard = {
+      reply_markup: {
+        inline_keyboard: [
+          [
+            { text: '✅ Confirm Payment', callback_data: `om_confirm_${amountXOF}` },
+            { text: '❌ Cancel', callback_data: 'payment_methods' }
+          ]
+        ]
+      }
+    };
+
+    await bot.sendMessage(chatId, message, {
+      parse_mode: 'Markdown',
+      reply_markup: keyboard.reply_markup
+    });
+  } catch (error) {
+    console.error('Error handling Orange Money amount input:', error);
+    await bot.sendMessage(chatId, '❌ Error processing amount. Please try again.');
   }
 }
 

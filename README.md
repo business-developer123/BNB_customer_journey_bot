@@ -52,11 +52,15 @@ A Telegram bot for crypto trading with BNB wallet integration.
    - QR code generation for event entry
    - Admin controls for event creation and management
 
-### 🚧 In Development
+### ✅ Completed Features
 
-7. **Orange Money Integration**
-   - Deposit funds via Orange Money
-   - Withdraw to Orange Money
+7. **Orange Money Integration** 🆕
+   - Multiple payment methods (Crypto + Orange Money)
+   - Orange Money cash-in transactions
+   - Real-time payment processing
+   - Secure authentication and token management
+   - Support for XOF currency (100 - 1,000,000 XOF)
+   - Comprehensive error handling and user feedback
 
 ## Project Structure
 
@@ -69,7 +73,9 @@ backend/
 │   │   └── User.ts                 # User model with wallet support
 │   ├── services/
 │   │   ├── userService.ts          # User management (database operations)
-│   │   └── walletService.ts        # Wallet management (database operations)
+│   │   ├── walletService.ts        # Wallet management (database operations)
+│   │   ├── orangeMoneyService.ts   # Orange Money API integration
+│   │   └── paymentService.ts       # Payment processing (Crypto + OM)
 │   ├── utils/
 │   │   ├── dbConnection.ts         # Database connection
 │   │   └── blockchainUtils.ts      # BNB blockchain utilities
@@ -85,7 +91,9 @@ backend/
 1. **Services Layer** (`/services/`)
    - **userService.ts**: Handles user-related database operations
    - **walletService.ts**: Handles wallet-related database operations
-   - Focus: Database interactions and business logic
+   - **orangeMoneyService.ts**: Handles Orange Money API integration
+   - **paymentService.ts**: Handles payment processing for both crypto and Orange Money
+   - Focus: Database interactions, external API integrations, and business logic
 
 2. **Utilities Layer** (`/utils/`)
    - **blockchainUtils.ts**: Handles all BNB blockchain operations
