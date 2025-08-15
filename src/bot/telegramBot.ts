@@ -6,7 +6,12 @@ import dotenv from 'dotenv';
 dotenv.config({ debug: false, override: true });
 const botToken = process.env.TELEGRAM_BOT_TOKEN;
 
-const bot = new TelegramBot(botToken as string, { polling: true });
+// Create bot instance without starting polling immediately
+const bot = new TelegramBot(botToken as string, { polling: false });
+
+// Track bot state
+let isBotRunning = false;
+let isShuttingDown = false;
 
 // Helper function to truncate long addresses for display
 function truncateAddress(address: string, startLength: number = 4, endLength: number = 4): string {
@@ -3142,25 +3147,45 @@ function setupBotHandlers() {
     }
   });
 
-  // Handle polling errors - NEVER let bot stop
-  bot.on('polling_error', (error) => {
-    console.error('❌ Polling error (recovered):', error);
-    // Don't exit process, just log error and continue
-    // Bot will automatically retry polling
+  // Handle polling errors with intelligent recovery
+  bot.on('polling_error', async (error: any) => {
+    console.error('❌ Polling error:', error);
+    
+    // Handle specific Telegram errors
+    if (error.code === 'ETELEGRAM') {
+      if (error.response?.statusCode === 409) {
+        console.log('🔄 Conflict detected - another bot instance may be running');
+        console.log('⏳ Waiting 5 seconds before retrying...');
+        
+        // Stop current polling
+        try {
+          await bot.stopPolling();
+          isBotRunning = false;
+          
+          // Wait before retrying
+          setTimeout(async () => {
+            try {
+              console.log('🔄 Retrying bot polling...');
+              await startBotPolling();
+            } catch (retryError) {
+              console.error('❌ Failed to retry polling:', retryError);
+            }
+          }, 5000);
+        } catch (stopError) {
+          console.error('❌ Error stopping polling for retry:', stopError);
+        }
+      } else if (error.response?.statusCode === 429) {
+        console.log('⏳ Rate limited - waiting before retry...');
+        // Bot will automatically retry after rate limit
+      } else {
+        console.log('⚠️ Other Telegram error - continuing with automatic retry');
+      }
+    } else {
+      console.log('⚠️ Non-Telegram error - continuing with automatic retry');
+    }
   });
 
-  // Handle uncaught exceptions - NEVER let bot stop
-  process.on('uncaughtException', (error) => {
-    console.error('❌ Uncaught Exception (recovered):', error);
-    // Don't exit process, just log error and continue
-  });
-
-  // Handle unhandled promise rejections - NEVER let bot stop
-  process.on('unhandledRejection', (reason, promise) => {
-    console.error('❌ Unhandled Rejection (recovered):', reason);
-    console.error('Promise:', promise);
-    // Don't exit process, just log error and continue
-  });
+  // Process event handlers are now managed in setupGracefulShutdown()
 }
 
 // Event Creation Input Handlers
@@ -5466,9 +5491,109 @@ async function handleOrangeMoneyAmountInput(msg: TelegramBot.Message) {
 }
 
 // Initialize bot
-function initBot() {
-  console.log('🤖 Starting Telegram bot...');
-  setupBotHandlers();
+async function initBot() {
+  try {
+    console.log('🤖 Starting Telegram bot...');
+    
+    // Set up event handlers first
+    setupBotHandlers();
+    
+    // Start polling
+    await startBotPolling();
+    
+    // Set up graceful shutdown handlers
+    setupGracefulShutdown();
+    
+    console.log('✅ Bot started successfully');
+  } catch (error) {
+    console.error('❌ Failed to start bot:', error);
+    throw error;
+  }
+}
+
+// Start bot polling
+async function startBotPolling() {
+  if (isBotRunning || isShuttingDown) {
+    console.log('⚠️ Bot is already running or shutting down');
+    return;
+  }
+  
+  try {
+    console.log('🔄 Starting bot polling...');
+    await bot.startPolling({ 
+      polling: true
+    });
+    
+    isBotRunning = true;
+    console.log('✅ Bot polling started successfully');
+  } catch (error) {
+    console.error('❌ Failed to start bot polling:', error);
+    throw error;
+  }
+}
+
+// Stop bot polling
+async function stopBotPolling() {
+  if (!isBotRunning || isShuttingDown) {
+    console.log('⚠️ Bot is not running or already shutting down');
+    return;
+  }
+  
+  try {
+    console.log('🛑 Stopping bot polling...');
+    await bot.stopPolling();
+    isBotRunning = false;
+    console.log('✅ Bot polling stopped successfully');
+  } catch (error) {
+    console.error('❌ Error stopping bot polling:', error);
+  }
+}
+
+// Setup graceful shutdown
+function setupGracefulShutdown() {
+  const shutdown = async (signal: string) => {
+    if (isShuttingDown) {
+      console.log('⚠️ Shutdown already in progress');
+      return;
+    }
+    
+    isShuttingDown = true;
+    console.log(`\n🛑 Received ${signal}. Starting graceful shutdown...`);
+    
+    try {
+      // Stop bot polling
+      await stopBotPolling();
+      
+      console.log('✅ Graceful shutdown completed');
+      process.exit(0);
+    } catch (error) {
+      console.error('❌ Error during shutdown:', error);
+      process.exit(1);
+    }
+  };
+  
+  // Handle different shutdown signals
+  process.on('SIGINT', () => shutdown('SIGINT'));
+  process.on('SIGTERM', () => shutdown('SIGTERM'));
+  process.on('SIGQUIT', () => shutdown('SIGQUIT'));
+  
+  // Handle process exit
+  process.on('exit', (code) => {
+    console.log(`🔄 Process exiting with code: ${code}`);
+  });
+  
+  // Handle uncaught exceptions
+  process.on('uncaughtException', (error) => {
+    console.error('❌ Uncaught Exception:', error);
+    shutdown('uncaughtException');
+  });
+  
+  // Handle unhandled promise rejections
+  process.on('unhandledRejection', (reason, promise) => {
+    console.error('❌ Unhandled Rejection:', reason);
+    console.error('Promise:', promise);
+    shutdown('unhandledRejection');
+  });
 }
 
 export { initBot }; 

@@ -14,7 +14,7 @@ dotenv.config();
 async function startApp() {
   try {
     await dbConnection();
-    initBot();
+    await initBot();
   } catch (error) {
     console.error("❌ Error starting application:", error);
     process.exit(1);
