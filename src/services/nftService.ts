@@ -121,6 +121,8 @@ async function getUserNFTsWithFilters(telegramId: number, filter?: {
             throw new Error('Telegram ID is required');
         }
 
+        console.log(`🔍 Getting NFTs for user ${telegramId} with filter:`, filter);
+
         // Get user wallet
         const wallet = await getUserWallet(telegramId);
         if (!wallet) {
@@ -133,26 +135,101 @@ async function getUserNFTsWithFilters(telegramId: number, filter?: {
             };
         }
 
+        console.log(`💰 User wallet found: ${wallet.address}`);
+
+        // First, get ticket purchases from database (this is more reliable for tickets)
+        const ticketPurchases = await TicketPurchase.find({ telegramId });
+        console.log(`📋 Found ${ticketPurchases.length} ticket purchases in database for user ${telegramId}`);
+
         // Get NFTs from blockchain
-        const nfts = await getUserNFTs(wallet.address);
-        
-        if (!nfts || nfts.length === 0) {
-            return {
-                nfts: [],
-                totalCount: 0,
-                ticketCount: 0,
-                collectibleCount: 0
-            };
+        let blockchainNFTs: UserNFT[] = [];
+        try {
+            blockchainNFTs = await getUserNFTs(wallet.address);
+            console.log(`🔗 Found ${blockchainNFTs.length} NFTs on blockchain for wallet ${wallet.address}`);
+        } catch (blockchainError) {
+            console.warn(`⚠️ Could not fetch blockchain NFTs:`, blockchainError);
+            // Continue with database records only
         }
 
+        // Create a map of blockchain NFTs by mint address for quick lookup
+        const blockchainNFTMap = new Map<string, UserNFT>();
+        blockchainNFTs.forEach(nft => {
+            blockchainNFTMap.set(nft.mint, nft);
+        });
+
+        // Build user's NFT collection combining database and blockchain data
+        const userNFTs: UserNFT[] = [];
+
+        // Process ticket purchases first (these are guaranteed to exist)
+        for (const purchase of ticketPurchases) {
+            console.log(`🎫 Processing ticket purchase: ${purchase.purchaseId} for event ${purchase.eventId}`);
+            
+            // Get event details
+            const event = await Event.findOne({ eventId: purchase.eventId });
+            if (!event) {
+                console.warn(`⚠️ Event not found for purchase ${purchase.purchaseId}: ${purchase.eventId}`);
+                continue;
+            }
+
+            // Check if we have blockchain data for this NFT
+            let blockchainNFT = blockchainNFTMap.get(purchase.mintAddress);
+            
+            if (!blockchainNFT) {
+                console.log(`⚠️ NFT ${purchase.mintAddress} not found on blockchain, creating from database record`);
+                // Create NFT object from database record
+                blockchainNFT = {
+                    mint: purchase.mintAddress,
+                    name: `${event.name} - ${purchase.category} Ticket`,
+                    description: `Event ticket for ${event.name} at ${event.venue}`,
+                    image: event.imageUrl || '',
+                    attributes: [
+                        { trait_type: 'Event', value: event.name },
+                        { trait_type: 'Category', value: purchase.category },
+                        { trait_type: 'Venue', value: event.venue },
+                        { trait_type: 'Date', value: event.date.toISOString() },
+                        { trait_type: 'Used', value: purchase.isUsed ? 'true' : 'false' }
+                    ],
+                    isEventTicket: true,
+                    eventDetails: {
+                        eventId: purchase.eventId,
+                        eventName: event.name,
+                        category: purchase.category,
+                        isUsed: purchase.isUsed
+                    }
+                };
+            } else {
+                // Update blockchain NFT with database information
+                blockchainNFT.isEventTicket = true;
+                blockchainNFT.eventDetails = {
+                    eventId: purchase.eventId,
+                    eventName: event.name,
+                    category: purchase.category,
+                    isUsed: purchase.isUsed
+                };
+            }
+
+            userNFTs.push(blockchainNFT);
+        }
+
+        // Add any other collectible NFTs from blockchain that aren't tickets
+        for (const blockchainNFT of blockchainNFTs) {
+            if (!blockchainNFT.isEventTicket && !userNFTs.some(nft => nft.mint === blockchainNFT.mint)) {
+                userNFTs.push(blockchainNFT);
+            }
+        }
+
+        console.log(`📊 Total NFTs for user ${telegramId}: ${userNFTs.length} (${ticketPurchases.length} tickets)`);
+
         // Apply filters
-        let filteredNFTs = nfts;
+        let filteredNFTs = userNFTs;
 
         if (filter?.type && filter.type !== 'all') {
             if (filter.type === 'tickets') {
-                filteredNFTs = nfts.filter(nft => nft.isEventTicket);
+                filteredNFTs = userNFTs.filter(nft => nft.isEventTicket);
+                console.log(`🎫 Filtered to ${filteredNFTs.length} tickets`);
             } else if (filter.type === 'collectibles') {
-                filteredNFTs = nfts.filter(nft => !nft.isEventTicket);
+                filteredNFTs = userNFTs.filter(nft => !nft.isEventTicket);
+                console.log(`🖼️ Filtered to ${filteredNFTs.length} collectibles`);
             }
         }
 
@@ -160,11 +237,14 @@ async function getUserNFTsWithFilters(telegramId: number, filter?: {
             filteredNFTs = filteredNFTs.filter(nft => 
                 nft.eventDetails?.eventId === filter.event
             );
+            console.log(`🎯 Filtered to ${filteredNFTs.length} NFTs for event ${filter.event}`);
         }
 
         // Count by type
-        const ticketCount = nfts.filter(nft => nft.isEventTicket).length;
-        const collectibleCount = nfts.filter(nft => !nft.isEventTicket).length;
+        const ticketCount = userNFTs.filter(nft => nft.isEventTicket).length;
+        const collectibleCount = userNFTs.filter(nft => !nft.isEventTicket).length;
+
+        console.log(`📈 Final counts - Total: ${filteredNFTs.length}, Tickets: ${ticketCount}, Collectibles: ${collectibleCount}`);
 
         return {
             nfts: filteredNFTs,
@@ -805,7 +885,7 @@ async function useTicketForEntry(
     }
 }
 
-// Get user's ticket purchases
+// Get user's ticket purchases with enhanced details
 async function getUserTicketPurchases(telegramId: number): Promise<TicketPurchaseData[]> {
     try {
         const purchases = await TicketPurchase.find({ telegramId });
@@ -823,6 +903,88 @@ async function getUserTicketPurchases(telegramId: number): Promise<TicketPurchas
     } catch (error) {
         console.error('Error getting user ticket purchases:', error);
         return [];
+    }
+}
+
+// Get user's tickets with full event details (database-based, more reliable)
+async function getUserTicketsWithDetails(telegramId: number): Promise<{
+    success: boolean;
+    tickets?: Array<{
+        purchaseId: string;
+        mintAddress: string;
+        eventId: string;
+        eventName: string;
+        category: 'VIP' | 'Standard' | 'Group';
+        price: number;
+        purchasedAt: Date;
+        isUsed: boolean;
+        usedAt?: Date;
+        venue: string;
+        eventDate: Date;
+        imageUrl: string;
+    }>;
+    error?: string;
+}> {
+    try {
+        if (!telegramId) {
+            throw new Error('Telegram ID is required');
+        }
+
+        console.log(`🎫 Getting tickets with details for user ${telegramId}`);
+
+        // Get all ticket purchases for the user
+        const purchases = await TicketPurchase.find({ telegramId });
+        console.log(`📋 Found ${purchases.length} ticket purchases for user ${telegramId}`);
+
+        if (purchases.length === 0) {
+            return {
+                success: true,
+                tickets: []
+            };
+        }
+
+        // Get event details for each purchase
+        const ticketsWithDetails = [];
+        for (const purchase of purchases) {
+            try {
+                const event = await Event.findOne({ eventId: purchase.eventId });
+                if (!event) {
+                    console.warn(`⚠️ Event not found for purchase ${purchase.purchaseId}: ${purchase.eventId}`);
+                    continue;
+                }
+
+                ticketsWithDetails.push({
+                    purchaseId: purchase.purchaseId,
+                    mintAddress: purchase.mintAddress,
+                    eventId: purchase.eventId,
+                    eventName: event.name,
+                    category: purchase.category,
+                    price: purchase.price,
+                    purchasedAt: purchase.purchasedAt,
+                    isUsed: purchase.isUsed,
+                    usedAt: purchase.usedAt,
+                    venue: event.venue,
+                    eventDate: event.date,
+                    imageUrl: event.imageUrl
+                });
+            } catch (eventError) {
+                console.warn(`⚠️ Error getting event details for purchase ${purchase.purchaseId}:`, eventError);
+                continue;
+            }
+        }
+
+        console.log(`✅ Successfully processed ${ticketsWithDetails.length} tickets with details`);
+
+        return {
+            success: true,
+            tickets: ticketsWithDetails
+        };
+    } catch (error) {
+        console.error('Error getting user tickets with details:', error);
+        return {
+            success: false,
+            error: error instanceof Error ? error.message : 'Unknown error'
+        };
     }
 }
 
@@ -1157,10 +1319,21 @@ async function transferNFTToUser(
     adminPrivateKey: string
 ): Promise<boolean> {
     try {
-        // This function should call the actual blockchain transfer function
-        // For now, we'll simulate success
         console.log(`🔄 Transferring NFT ${mintAddress} to ${recipientAddress}`);
-        return true;
+        
+        // Import the actual transfer function from nftUtils
+        const { transferNFTToUser: transferNFTFromUtils } = await import('../utils/nftUtils');
+        
+        // Perform the actual blockchain transfer
+        const transferResult = await transferNFTFromUtils(mintAddress, recipientAddress, adminPrivateKey);
+        
+        if (transferResult) {
+            console.log(`✅ NFT ${mintAddress} successfully transferred to ${recipientAddress}`);
+            return true;
+        } else {
+            console.error(`❌ Failed to transfer NFT ${mintAddress} to ${recipientAddress}`);
+            return false;
+        }
     } catch (error) {
         console.error('Error transferring NFT:', error);
         return false;
@@ -1940,6 +2113,7 @@ export {
     validateTicketForEntry,
     useTicketForEntry,
     getUserTicketPurchases,
+    getUserTicketsWithDetails,
     mintCustomNFT,
     listNFTForSale,
     getActiveNFTListings,
@@ -1964,7 +2138,8 @@ export {
     bulkUpdateNFTStatus,
     getNFTAnalytics,
     cleanupExpiredListings,
-    debugEventById
+    debugEventById,
+    debugUserTickets
 };
 
 // Utility function to check if NFT is available for listing
@@ -2097,6 +2272,111 @@ async function getUserNFTPortfolio(telegramId: number): Promise<{
         };
     } catch (error) {
         console.error('Error getting user NFT portfolio:', error);
+        return {
+            success: false,
+            error: error instanceof Error ? error.message : 'Unknown error'
+        };
+    }
+}
+
+// Debug function to troubleshoot ticket display issues
+async function debugUserTickets(telegramId: number): Promise<{
+    success: boolean;
+    debug?: {
+        userInfo: {
+            telegramId: number;
+            hasWallet: boolean;
+            walletAddress?: string;
+        };
+        databaseTickets: {
+            count: number;
+            tickets: Array<{
+                purchaseId: string;
+                eventId: string;
+                category: string;
+                mintAddress: string;
+                isUsed: boolean;
+            }>;
+        };
+        blockchainNFTs: {
+            count: number;
+            nfts: Array<{
+                mint: string;
+                name: string;
+                isEventTicket: boolean;
+            }>;
+        };
+        events: {
+            count: number;
+            eventIds: string[];
+        };
+    };
+    error?: string;
+}> {
+    try {
+        if (!telegramId) {
+            throw new Error('Telegram ID is required');
+        }
+
+        console.log(`🔍 Debugging tickets for user ${telegramId}`);
+
+        // Get user wallet info
+        const wallet = await getUserWallet(telegramId);
+        const hasWallet = !!wallet;
+
+        // Get database tickets
+        const databaseTickets = await TicketPurchase.find({ telegramId });
+        console.log(`📋 Database tickets: ${databaseTickets.length}`);
+
+        // Get blockchain NFTs
+        let blockchainNFTs: UserNFT[] = [];
+        try {
+            if (wallet) {
+                blockchainNFTs = await getUserNFTs(wallet.address);
+                console.log(`🔗 Blockchain NFTs: ${blockchainNFTs.length}`);
+            }
+        } catch (blockchainError) {
+            console.warn(`⚠️ Could not fetch blockchain NFTs:`, blockchainError);
+        }
+
+        // Get events
+        const events = await Event.find({});
+        console.log(`📅 Total events: ${events.length}`);
+
+        const debug = {
+            userInfo: {
+                telegramId,
+                hasWallet,
+                walletAddress: wallet?.address
+            },
+            databaseTickets: {
+                count: databaseTickets.length,
+                tickets: databaseTickets.map(ticket => ({
+                    purchaseId: ticket.purchaseId,
+                    eventId: ticket.eventId,
+                    category: ticket.category,
+                    mintAddress: ticket.mintAddress,
+                    isUsed: ticket.isUsed
+                }))
+            },
+            blockchainNFTs: {
+                count: blockchainNFTs.length,
+                nfts: blockchainNFTs.map(nft => ({
+                    mint: nft.mint,
+                    name: nft.name,
+                    isEventTicket: nft.isEventTicket || false
+                }))
+            },
+            events: {
+                count: events.length,
+                eventIds: events.map(e => e.eventId)
+            }
+        };
+
+        console.log(`✅ Debug completed for user ${telegramId}`);
+        return { success: true, debug };
+    } catch (error) {
+        console.error('Error debugging user tickets:', error);
         return {
             success: false,
             error: error instanceof Error ? error.message : 'Unknown error'

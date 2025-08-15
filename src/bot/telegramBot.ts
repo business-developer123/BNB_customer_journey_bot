@@ -516,6 +516,12 @@ async function handleCallbackQuery(query: TelegramBot.CallbackQuery) {
       await handleOrangeMoneyTicketConfirmation(chatId, user, messageId, eventId, category, phoneNumber);
       return;
     }
+    if (data.startsWith('debug_tickets_')) {
+      const userId = parseInt(data.replace('debug_tickets_', ''));
+      console.log(`🔍 Debug tickets requested for user ${userId}`);
+      await handleDebugTicketsCallback(chatId, user, messageId, userId);
+      return;
+    }
     if (data.startsWith('om_confirm_')) {
       const amountStr = data.replace('om_confirm_', '');
       const amount = parseFloat(amountStr);
@@ -2107,49 +2113,171 @@ async function handleEventListCallback(chatId: number, user: TelegramBot.User, m
   }
 }
 
-// Handle My Tickets callback
-async function handleMyTicketsCallback(chatId: number, user: TelegramBot.User, messageId: number) {
+// Handle Debug Tickets callback
+async function handleDebugTicketsCallback(chatId: number, user: TelegramBot.User, messageId: number, targetUserId: number) {
   try {
-    const { getUserNFTsWithFilters } = await import('../services/nftService');
-    const nftData = await getUserNFTsWithFilters(user.id, { type: 'tickets' });
-
-    if (nftData.ticketCount === 0) {
-      await bot.editMessageText(
-        '🎫 *My Tickets*\n\n' +
-        '*You don\'t have any event tickets yet.*\n\n' +
-        'Purchase tickets from available events to see them here!',
-        {
-          chat_id: chatId,
-          message_id: messageId,
-          parse_mode: 'Markdown',
-          reply_markup: {
-            inline_keyboard: [
-              [
-                { text: '📋 Browse Events', callback_data: 'event_list' },
-                { text: '🔙 Back', callback_data: 'events' }
-              ]
-            ]
-          }
+    console.log(`🔍 Debug tickets requested for user ${targetUserId} by user ${user.id}`);
+    
+    const { debugUserTickets, isAdmin } = await import('../services/nftService');
+    
+    // Only allow users to debug their own tickets or admins to debug any user
+    if (user.id !== targetUserId && !isAdmin(user.id)) {
+      await bot.editMessageText('❌ Access denied. You can only debug your own tickets.', {
+        chat_id: chatId,
+        message_id: messageId,
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: '🔙 Back to Events', callback_data: 'events' }]
+          ]
         }
-      );
+      });
       return;
     }
 
-    let ticketsMessage = `🎫 *My Tickets* (${nftData.ticketCount})\n\n`;
+    const debugData = await debugUserTickets(targetUserId);
+
+    if (!debugData.success) {
+      await bot.editMessageText(`❌ Error debugging tickets: ${debugData.error}`, {
+        chat_id: chatId,
+        message_id: messageId,
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: '🔙 Back to Events', callback_data: 'events' }]
+          ]
+        }
+      });
+      return;
+    }
+
+    const debug = debugData.debug!;
+    let debugMessage = `🔍 *Ticket Debug Report*\n\n`;
+    debugMessage += `👤 **User ID:** ${debug.userInfo.telegramId}\n`;
+    debugMessage += `💰 **Wallet:** ${debug.userInfo.hasWallet ? '✅ Yes' : '❌ No'}\n`;
+    
+    if (debug.userInfo.walletAddress) {
+      debugMessage += `📍 **Address:** \`${debug.userInfo.walletAddress}\`\n`;
+    }
+    
+    debugMessage += `\n📋 **Database Tickets:** ${debug.databaseTickets.count}\n`;
+    if (debug.databaseTickets.count > 0) {
+      debug.databaseTickets.tickets.forEach((ticket, index) => {
+        debugMessage += `${index + 1}. ${ticket.eventId} - ${ticket.category} (${ticket.isUsed ? 'Used' : 'Valid'})\n`;
+      });
+    }
+    
+    debugMessage += `\n🔗 **Blockchain NFTs:** ${debug.blockchainNFTs.count}\n`;
+    if (debug.blockchainNFTs.count > 0) {
+      debug.blockchainNFTs.nfts.forEach((nft, index) => {
+        debugMessage += `${index + 1}. ${nft.name} (${nft.isEventTicket ? 'Ticket' : 'Collectible'})\n`;
+      });
+    }
+    
+    debugMessage += `\n📅 **Total Events:** ${debug.events.count}\n`;
+    if (debug.events.count > 0) {
+      debugMessage += `Event IDs: ${debug.events.eventIds.slice(0, 5).join(', ')}${debug.events.count > 5 ? '...' : ''}\n`;
+    }
+
+    const keyboard = {
+      inline_keyboard: [
+        [
+          { text: '🔄 Refresh Debug', callback_data: `debug_tickets_${targetUserId}` },
+          { text: '🎫 My Tickets', callback_data: 'my_tickets' }
+        ],
+        [
+          { text: '🔙 Back to Events', callback_data: 'events' }
+        ]
+      ]
+    };
+
+    await bot.editMessageText(debugMessage, {
+      chat_id: chatId,
+      message_id: messageId,
+      parse_mode: 'Markdown',
+      reply_markup: keyboard
+    });
+  } catch (error) {
+    console.error('Error handling debug tickets callback:', error);
+    await bot.editMessageText('❌ Error debugging tickets. Please try again.', {
+      chat_id: chatId,
+      message_id: messageId,
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: '🔙 Back to Events', callback_data: 'events' }]
+        ]
+      }
+    });
+  }
+}
+
+// Handle My Tickets callback
+async function handleMyTicketsCallback(chatId: number, user: TelegramBot.User, messageId: number) {
+  try {
+    console.log(`🎫 User ${user.id} requested to view their tickets`);
+    
+    // Use the new reliable database-based function
+    const { getUserTicketsWithDetails } = await import('../services/nftService');
+    const ticketData = await getUserTicketsWithDetails(user.id);
+
+    if (!ticketData.success) {
+      console.error(`❌ Error getting tickets for user ${user.id}:`, ticketData.error);
+      await bot.editMessageText('❌ Error loading your tickets. Please try again.', {
+        chat_id: chatId,
+        message_id: messageId,
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: '🔙 Back to Events', callback_data: 'events' }]
+          ]
+        }
+      });
+      return;
+    }
+
+    if (!ticketData.tickets || ticketData.tickets.length === 0) {
+      console.log(`📋 User ${user.id} has no tickets`);
+              await bot.editMessageText(
+          '🎫 *My Tickets*\n\n' +
+          '*You don\'t have any event tickets yet.*\n\n' +
+          'Purchase tickets from available events to see them here!',
+          {
+            chat_id: chatId,
+            message_id: messageId,
+            parse_mode: 'Markdown',
+            reply_markup: {
+              inline_keyboard: [
+                [
+                  { text: '📋 Browse Events', callback_data: 'event_list' },
+                  { text: '🔙 Back', callback_data: 'events' }
+                ],
+                [
+                  { text: '🔍 Debug My Tickets', callback_data: `debug_tickets_${user.id}` }
+                ]
+              ]
+            }
+          }
+        );
+      return;
+    }
+
+    console.log(`✅ Found ${ticketData.tickets.length} tickets for user ${user.id}`);
+
+    let ticketsMessage = `🎫 *My Tickets* (${ticketData.tickets.length})\n\n`;
 
     const ticketButtons: any[][] = [];
-    nftData.nfts.forEach((ticket, index) => {
-      const eventDetails = ticket.eventDetails;
-      const isUsed = eventDetails?.isUsed ? '✅ Used' : '🎫 Valid';
+    ticketData.tickets.forEach((ticket, index) => {
+      const isUsed = ticket.isUsed ? '✅ Used' : '🎫 Valid';
+      const eventDate = new Date(ticket.eventDate).toLocaleDateString();
 
-      ticketsMessage += `🎫 **${ticket.name}**\n`;
-      ticketsMessage += `📅 Event: ${eventDetails?.eventName || 'Unknown'}\n`;
-      ticketsMessage += `🏷️ Category: ${eventDetails?.category || 'Unknown'}\n`;
-      ticketsMessage += `🔒 Status: ${isUsed}\n\n`;
+      ticketsMessage += `🎫 **${ticket.eventName}**\n`;
+      ticketsMessage += `🏷️ Category: ${ticket.category}\n`;
+      ticketsMessage += `📅 Event Date: ${eventDate}\n`;
+      ticketsMessage += `📍 Venue: ${ticket.venue}\n`;
+      ticketsMessage += `💰 Price: ${ticket.price} SOL\n`;
+      ticketsMessage += `🔒 Status: ${isUsed}\n`;
+      ticketsMessage += `📅 Purchased: ${ticket.purchasedAt.toLocaleDateString()}\n\n`;
 
       ticketButtons.push([{
-        text: `🎫 ${ticket.name}`,
-        callback_data: `view_ticket_${ticket.mint}`
+        text: `🎫 ${ticket.eventName} - ${ticket.category}`,
+        callback_data: `view_ticket_${ticket.mintAddress}`
       }]);
     });
 
