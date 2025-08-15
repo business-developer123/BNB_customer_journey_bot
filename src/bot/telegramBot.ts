@@ -21,6 +21,28 @@ function truncateAddress(address: string, startLength: number = 4, endLength: nu
   return `${address.substring(0, startLength)}...${address.substring(address.length - endLength)}`;
 }
 
+// Helper function to generate unique session IDs
+function generateSessionId(): string {
+  return Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
+}
+
+// Helper function to clean up expired transfer ticket sessions
+function cleanupExpiredTransferSessions() {
+  const now = Date.now();
+  const sessionTimeout = 30 * 60 * 1000; // 30 minutes
+  
+  Object.keys(userStates).forEach(userId => {
+    const userState = userStates[parseInt(userId)];
+    if (userState && userState.transferTicketSessionId && userState.transferTicketMint) {
+      // If user has been in transfer state for more than 30 minutes, clean up
+      if (userState.state === 'transfer_ticket_entering_recipient') {
+        // This is a simple cleanup - in production you might want to store timestamps
+        // For now, we'll clean up when the session is used or when explicitly cleaned
+      }
+    }
+  });
+}
+
 // Helper function to determine network and get network info
 function getNetworkInfo() {
   const solanaRpcProvider = process.env.SOLANA_RPC_PROVIDER;
@@ -58,6 +80,11 @@ const userStates: {
       category: string;
       priceInXOF: number;
     };
+    // Transfer ticket states
+    transferTicketMint?: string;
+    transferTicketRecipient?: string;
+    transferTicketRecipientUser?: any;
+    transferTicketSessionId?: string;
   }
 } = {};
 
@@ -74,9 +101,6 @@ function createMainMenuKeyboard() {
         [
           { text: '🖼️ My NFTs', callback_data: 'nfts' },
           { text: '🎫 Events', callback_data: 'events' }
-        ],
-        [
-          { text: '💳 Payment Methods', callback_data: 'payment_methods' }
         ],
         [
           { text: '🆕 Create Wallet', callback_data: 'create_wallet' },
@@ -489,12 +513,59 @@ async function handleCallbackQuery(query: TelegramBot.CallbackQuery) {
     }
     if (data.startsWith('view_ticket_')) {
       const mintAddress = data.replace('view_ticket_', '');
+      // Clean up any pending transfer state when viewing ticket
+      if (userStates[user.id]) {
+        delete userStates[user.id].transferTicketMint;
+        delete userStates[user.id].transferTicketRecipient;
+        delete userStates[user.id].transferTicketRecipientUser;
+        delete userStates[user.id].transferTicketSessionId;
+      }
       await handleViewTicketCallback(chatId, user, messageId, mintAddress);
       return;
     }
     if (data.startsWith('validate_ticket_')) {
       const mintAddress = data.replace('validate_ticket_', '');
       await handleValidateTicketCallback(chatId, user, messageId, mintAddress);
+      return;
+    }
+    if (data.startsWith('transfer_ticket_')) {
+      const mintAddress = data.replace('transfer_ticket_', '');
+      await handleTransferTicketCallback(chatId, user, messageId, mintAddress);
+      return;
+    }
+    if (data.startsWith('confirm_transfer_ticket_')) {
+      const sessionId = data.replace('confirm_transfer_ticket_', '');
+      const userState = userStates[user.id];
+      
+      if (userState && userState.transferTicketMint && userState.transferTicketRecipient && userState.transferTicketSessionId === sessionId) {
+        await handleConfirmTransferTicketCallback(chatId, user, messageId, userState.transferTicketMint, userState.transferTicketRecipient);
+        
+        // Clean up the transfer ticket state
+        delete userState.transferTicketMint;
+        delete userState.transferTicketRecipient;
+        delete userState.transferTicketSessionId;
+      } else {
+        console.error('Invalid or expired confirm_transfer_ticket callback data:', data);
+        await bot.answerCallbackQuery(query.id, { text: '❌ Transfer session expired. Please try again.' });
+      }
+      return;
+    }
+    if (data.startsWith('execute_transfer_ticket_')) {
+      const sessionId = data.replace('execute_transfer_ticket_', '');
+      const userState = userStates[user.id];
+      
+      if (userState && userState.transferTicketMint && userState.transferTicketRecipient && userState.transferTicketRecipientUser && userState.transferTicketSessionId === sessionId) {
+        await handleExecuteTransferTicketCallback(chatId, user, messageId, userState.transferTicketMint, userState.transferTicketRecipient);
+        
+        // Clean up the transfer ticket state
+        delete userState.transferTicketMint;
+        delete userState.transferTicketRecipient;
+        delete userState.transferTicketRecipientUser;
+        delete userState.transferTicketSessionId;
+      } else {
+        console.error('Invalid or expired execute_transfer_ticket callback data:', data);
+        await bot.answerCallbackQuery(query.id, { text: '❌ Transfer session expired. Please try again.' });
+      }
       return;
     }
     if (data.startsWith('debug_event_')) {
@@ -560,22 +631,30 @@ async function handleCallbackQuery(query: TelegramBot.CallbackQuery) {
         await handleHelpCallback(chatId, messageId);
         break;
       case 'main_menu':
+        // Clean up any pending transfer state when going to main menu
+        if (userStates[user.id]) {
+          delete userStates[user.id].transferTicketMint;
+          delete userStates[user.id].transferTicketRecipient;
+          delete userStates[user.id].transferTicketRecipientUser;
+          delete userStates[user.id].transferTicketSessionId;
+        }
         await handleMainMenuCallback(chatId, user, messageId);
         break;
       case 'nfts':
+        // Clean up any pending transfer state when going to NFTs
+        if (userStates[user.id]) {
+          delete userStates[user.id].transferTicketMint;
+          delete userStates[user.id].transferTicketRecipient;
+          delete userStates[user.id].transferTicketRecipientUser;
+          delete userStates[user.id].transferTicketSessionId;
+        }
         await handleNFTsCallback(chatId, user, messageId);
-        break;
-      case 'nft_marketplace':
-        await handleNFTMarketplaceCallback(chatId, user, messageId);
         break;
       case 'nft_list_all':
         await handleNFTListCallback(chatId, user, messageId, 'all');
         break;
       case 'nft_list_tickets':
         await handleNFTListCallback(chatId, user, messageId, 'tickets');
-        break;
-      case 'nft_list_collectibles':
-        await handleNFTListCallback(chatId, user, messageId, 'collectibles');
         break;
       case 'nft_transfer':
         await handleNFTTransferCallback(chatId, user, messageId);
@@ -586,13 +665,18 @@ async function handleCallbackQuery(query: TelegramBot.CallbackQuery) {
       case 'admin_create_event':
         await handleCreateEventCallback(chatId, user, messageId);
         break;
-      case 'admin_mint_custom':
-        await handleMintCustomNFTCallback(chatId, user, messageId);
-        break;
+
       case 'event_list':
         await handleEventListCallback(chatId, user, messageId);
         break;
       case 'my_tickets':
+        // Clean up any pending transfer state when going to my tickets
+        if (userStates[user.id]) {
+          delete userStates[user.id].transferTicketMint;
+          delete userStates[user.id].transferTicketRecipient;
+          delete userStates[user.id].transferTicketRecipientUser;
+          delete userStates[user.id].transferTicketSessionId;
+        }
         await handleMyTicketsCallback(chatId, user, messageId);
         break;
       case 'admin_event_stats':
@@ -1814,8 +1898,13 @@ async function handleNFTsCallback(chatId: number, user: TelegramBot.User, messag
       const { getUserNFTsWithFilters } = await import('../services/nftService');
       const nftData = await getUserNFTsWithFilters(user.id);
 
+      // Validate nftData
+      if (!nftData || typeof nftData.totalCount !== 'number') {
+        throw new Error('Invalid NFT data received from service');
+      }
+
       if (!userStates[user.id]) userStates[user.id] = { state: '' };
-      userStates[user.id].nfts = nftData.nfts;
+      userStates[user.id].nfts = nftData.nfts || [];
 
       const { networkInfo } = getNetworkInfo();
 
@@ -1823,13 +1912,12 @@ async function handleNFTsCallback(chatId: number, user: TelegramBot.User, messag
       nftMessage += `📍 *Wallet:* \`${truncateAddress(walletInfo.address)}\`\n`;
       nftMessage += `🌐 *Network:* ${networkInfo}\n\n`;
       nftMessage += `📊 *Collection Summary:*\n`;
-      nftMessage += `• Total NFTs: ${nftData.totalCount}\n`;
-      nftMessage += `• Event Tickets: ${nftData.ticketCount}\n`;
-      nftMessage += `• Collectibles: ${nftData.collectibleCount}\n\n`;
+      nftMessage += `• Total NFTs: ${nftData.totalCount || 0}\n`;
+      nftMessage += `• Event Tickets: ${nftData.ticketCount || 0}\n\n`;
 
-      if (nftData.totalCount === 0) {
+      if (!nftData.nfts || nftData.nfts.length === 0 || nftData.totalCount === 0) {
         nftMessage += `*You don't have any NFTs yet.*\n\n`;
-        nftMessage += `Visit the Events section to purchase tickets or check marketplace for collectibles!`;
+        nftMessage += `Visit the Events section to purchase tickets!`;
 
         const keyboard = {
           reply_markup: {
@@ -1852,24 +1940,61 @@ async function handleNFTsCallback(chatId: number, user: TelegramBot.User, messag
         return;
       }
 
-      // Show first few NFTs
+      // Show first few NFTs with proper null checks
       const displayLimit = 5;
-      const displayNFTs = nftData.nfts.slice(0, displayLimit);
+      const displayNFTs = (nftData.nfts || []).slice(0, displayLimit);
 
       displayNFTs.forEach((nft, index) => {
-        nftMessage += `${index + 1}. **${nft.name}**\n`;
-        if (nft.isEventTicket && nft.eventDetails) {
-          nftMessage += `   🎫 ${nft.eventDetails.category} Ticket\n`;
-          nftMessage += `   📅 ${nft.eventDetails.eventName}\n`;
-          nftMessage += `   ${nft.eventDetails.isUsed ? '✅ Used' : '🎯 Valid'}\n`;
-        } else {
-          nftMessage += `   🖼️ Collectible\n`;
+              // Skip invalid NFTs
+      if (!nft || !nft.mint) {
+        console.warn(`⚠️ Skipping invalid NFT at index ${index}:`, nft);
+        return;
+      }
+      
+      // Ensure nft.name exists and is safe for Markdown
+      const safeName = nft.name ? nft.name.replace(/[*_`]/g, '') : 'Unknown NFT';
+      
+      // Skip NFTs with invalid names
+      if (!safeName || safeName.trim() === '') {
+        console.warn(`⚠️ Skipping NFT with invalid name at index ${index}:`, nft);
+        return;
+      }
+      
+      // Validate NFT attributes if they exist
+      if (nft.attributes && Array.isArray(nft.attributes)) {
+        nft.attributes = nft.attributes.filter(attr => 
+          attr && typeof attr.trait_type === 'string' && attr.value !== undefined
+        );
+      }
+        nftMessage += `${index + 1}. **${safeName}**\n`;
+        
+        if (nft.isEventTicket && nft.eventDetails && nft.eventDetails.eventId) {
+          try {
+            // Ensure all eventDetails properties exist and are safe
+            const category = nft.eventDetails.category ? nft.eventDetails.category.replace(/[*_`]/g, '') : 'Standard';
+            const eventName = nft.eventDetails.eventName ? nft.eventDetails.eventName.replace(/[*_`]/g, '') : 'Unknown Event';
+            const isUsed = nft.eventDetails.isUsed || false;
+            
+            // Additional validation for event details
+            if (!category || !eventName) {
+              throw new Error('Missing required event details');
+            }
+            
+            nftMessage += `   🎫 ${category} Ticket\n`;
+            nftMessage += `   📅 ${eventName}\n`;
+            nftMessage += `   ${isUsed ? '✅ Used' : '🎯 Valid'}\n`;
+          } catch (eventError) {
+            console.warn(`⚠️ Error processing event details for NFT ${nft.mint}:`, eventError);
+            nftMessage += `   🎫 Event Ticket (Details unavailable)\n`;
+          }
         }
+        
         nftMessage += `\n`;
       });
 
-      if (nftData.totalCount > displayLimit) {
-        nftMessage += `... and ${nftData.totalCount - displayLimit} more\n\n`;
+      const remainingCount = Math.max(0, (nftData.totalCount || 0) - displayLimit);
+      if (remainingCount > 0) {
+        nftMessage += `... and ${remainingCount} more\n\n`;
       }
 
       const keyboard = {
@@ -1880,17 +2005,20 @@ async function handleNFTsCallback(chatId: number, user: TelegramBot.User, messag
               { text: '🎫 Tickets Only', callback_data: 'nft_list_tickets' }
             ],
             [
-              { text: '🖼️ Collectibles Only', callback_data: 'nft_list_collectibles' },
               { text: '🔄 Refresh', callback_data: 'nfts' }
             ],
             [
-              { text: '👥 Transfer NFT', callback_data: 'nft_transfer' },
-              { text: '🛒 NFT Marketplace', callback_data: 'nft_marketplace' }
+              { text: '👥 Transfer NFT', callback_data: 'nft_transfer' }
             ],
             [{ text: '🔙 Back', callback_data: 'main_menu' }]
           ]
         }
       };
+
+      // Ensure message is not too long for Telegram
+      if (nftMessage.length > 4096) {
+        nftMessage = nftMessage.substring(0, 4090) + '...\n\n*Message truncated due to length*';
+      }
 
       await bot.editMessageText(nftMessage, {
         chat_id: chatId,
@@ -1903,15 +2031,10 @@ async function handleNFTsCallback(chatId: number, user: TelegramBot.User, messag
 
       let errorMessage = '❌ *Error loading NFTs*\n\n';
 
-      if (nftError instanceof Error && nftError.message.includes('MORALIS_API_KEY')) {
-        errorMessage += 'Moralis API is not configured. Please contact the administrator to enable NFT functionality.';
-      } else {
-        errorMessage += 'There was an issue fetching your NFTs. This could be due to:\n\n';
-        errorMessage += '• Network connectivity issues\n';
-        errorMessage += '• Moralis API rate limits\n';
-        errorMessage += '• Temporary service unavailability\n\n';
-        errorMessage += 'Please try again in a moment.';
-      }
+      errorMessage += 'There was an issue fetching your NFTs. This could be due to:\n\n';
+      errorMessage += '• Network connectivity issues\n';
+      errorMessage += '• Temporary service unavailability\n\n';
+      errorMessage += 'Please try again in a moment.';
 
       await bot.editMessageText(errorMessage, {
         chat_id: chatId,
@@ -2423,8 +2546,7 @@ async function handleEventsCallback(chatId: number, user: TelegramBot.User, mess
           inline_keyboard: [
             ...(userIsAdmin ? [
               [
-                { text: '🆕 Create Event', callback_data: 'admin_create_event' },
-                { text: '🎨 Mint Custom NFT', callback_data: 'admin_mint_custom' }
+                { text: '🆕 Create Event', callback_data: 'admin_create_event' }
               ],
               [
                 { text: '🔍 Check Admin NFTs', callback_data: 'admin_check_nfts' },
@@ -2478,8 +2600,7 @@ async function handleEventsCallback(chatId: number, user: TelegramBot.User, mess
           ],
           ...(userIsAdmin ? [
             [
-              { text: '🆕 Create Event', callback_data: 'admin_create_event' },
-              { text: '🎨 Mint Custom NFT', callback_data: 'admin_mint_custom' }
+              { text: '🆕 Create Event', callback_data: 'admin_create_event' }
             ],
             [
               { text: '📊 Event Stats', callback_data: 'admin_event_stats' },
@@ -3126,18 +3247,7 @@ function setupBotHandlers() {
         } else if (userState.state === 'creating_event_categories') {
           handleEventCategoriesInput(msg);
           return;
-        } else if (userState.state === 'minting_custom_nft_name') {
-          handleCustomNFTNameInput(msg);
-          return;
-        } else if (userState.state === 'minting_custom_nft_description') {
-          handleCustomNFTDescriptionInput(msg);
-          return;
-        } else if (userState.state === 'minting_custom_nft_symbol') {
-          handleCustomNFTSymbolInput(msg);
-          return;
-        } else if (userState.state === 'minting_custom_nft_image') {
-          handleCustomNFTImageInput(msg);
-          return;
+
         } else if (userState.state === 'market_enter_amount') {
           const amount = parseFloat(msg.text!.trim());
           if (isNaN(amount) || amount <= 0) {
@@ -3190,6 +3300,10 @@ function setupBotHandlers() {
         } else if (userState.state === 'om_entering_phone') {
           await handleOrangeMoneyPhoneInput(msg);
           return;
+        } else if (userState.state === 'transfer_ticket_entering_recipient') {
+          await handleTransferTicketRecipientInput(msg);
+          return;
+        // Amount input is no longer needed for NFT transfers since they are non-fungible
         }
       }
       handleUnknownCommand(msg);
@@ -3426,7 +3540,7 @@ async function handleEventPhotoUpload(msg: TelegramBot.Message) {
   }
 
   try {
-    bot.sendMessage(msg.chat.id, '🔄 Uploading image to IPFS... This may take a moment.');
+    bot.sendMessage(msg.chat.id, '�� Uploading image to IPFS... This may take a moment.');
 
     // Get the highest resolution photo
     const photo = msg.photo[msg.photo.length - 1];
@@ -3571,6 +3685,16 @@ async function handleEventCategoriesInput(msg: TelegramBot.Message) {
   }
 
   // **THIS IS WHERE NFT MINTING HAPPENS!**
+  // Store event data before clearing state
+  const eventData = {
+    name: userStates[user.id].data.eventData.name,
+    description: userStates[user.id].data.eventData.description,
+    date: userStates[user.id].data.eventData.date,
+    venue: userStates[user.id].data.eventData.venue,
+    imageUrl: userStates[user.id].data.eventData.imageUrl
+  };
+
+  // Clear user state after storing the data
   userStates[user.id].state = '';
 
   bot.sendMessage(msg.chat.id, '🔄 Creating event and minting NFT tickets... This may take a moment.');
@@ -3579,11 +3703,11 @@ async function handleEventCategoriesInput(msg: TelegramBot.Message) {
     const { createEvent } = await import('../services/nftService');
 
     const result = await createEvent(user.id, {
-      name: userStates[user.id].data.eventData.name,
-      description: userStates[user.id].data.eventData.description,
-      date: userStates[user.id].data.eventData.date,
-      venue: userStates[user.id].data.eventData.venue,
-      imageUrl: userStates[user.id].data.eventData.imageUrl,
+      name: eventData.name,
+      description: eventData.description,
+      date: eventData.date,
+      venue: eventData.venue,
+      imageUrl: eventData.imageUrl,
       categories
     });
 
@@ -3593,9 +3717,9 @@ async function handleEventCategoriesInput(msg: TelegramBot.Message) {
 
       bot.sendMessage(msg.chat.id,
         `🎉 *Event Created Successfully!*\n\n` +
-        `📅 **${userStates[user.id].data.eventData.name}**\n` +
-        `📍 ${userStates[user.id].data.eventData.venue}\n` +
-        `🗓️ ${userStates[user.id].data.eventData.date.toLocaleString()}\n\n` +
+        `📅 **${eventData.name}**\n` +
+        `📍 ${eventData.venue}\n` +
+        `🗓️ ${eventData.date.toLocaleString()}\n\n` +
         `🎫 **${totalTickets} NFT tickets minted:**\n` +
         categories.map(cat => `• ${cat.maxSupply}x ${cat.category} (${cat.price} SOL each)`).join('\n') + '\n\n' +
         `💰 **Minting Cost:** ~${totalCost} SOL\n` +
@@ -3652,161 +3776,8 @@ async function handleEventCategoriesInput(msg: TelegramBot.Message) {
   }
 
   // Clean up user state
-  if (userStates[user.id].data) {
+  if (userStates[user.id] && userStates[user.id].data) {
     delete userStates[user.id].data.eventData;
-  }
-}
-
-// Custom NFT Input Handlers
-async function handleCustomNFTNameInput(msg: TelegramBot.Message) {
-  const user = msg.from!;
-  const nftName = msg.text!.trim();
-
-  if (nftName.length < 2) {
-    bot.sendMessage(msg.chat.id, '❌ NFT name must be at least 2 characters long. Please try again:');
-    return;
-  }
-
-  if (!userStates[user.id].data) userStates[user.id].data = {};
-  if (!userStates[user.id].data.nftData) userStates[user.id].data.nftData = {};
-  userStates[user.id].data.nftData.name = nftName;
-  userStates[user.id].state = 'minting_custom_nft_description';
-
-  bot.sendMessage(msg.chat.id,
-    `✅ NFT name set: "${nftName}"\n\n` +
-    '**Step 2 of 5:** NFT Description\n' +
-    'Please enter a description for your NFT:'
-  );
-}
-
-async function handleCustomNFTDescriptionInput(msg: TelegramBot.Message) {
-  const user = msg.from!;
-  const description = msg.text!.trim();
-
-  userStates[user.id].data.nftData.description = description;
-  userStates[user.id].state = 'minting_custom_nft_symbol';
-
-  bot.sendMessage(msg.chat.id,
-    `✅ Description set\n\n` +
-    '**Step 3 of 5:** NFT Symbol\n' +
-    'Please enter a short symbol for your NFT (2-10 characters, e.g., "ART", "BADGE"):'
-  );
-}
-
-async function handleCustomNFTSymbolInput(msg: TelegramBot.Message) {
-  const user = msg.from!;
-  const symbol = msg.text!.trim().toUpperCase();
-
-  if (symbol.length < 2 || symbol.length > 10) {
-    bot.sendMessage(msg.chat.id, '❌ Symbol must be 2-10 characters long. Please try again:');
-    return;
-  }
-
-  userStates[user.id].data.nftData.name = symbol;
-  userStates[user.id].state = 'minting_custom_nft_image';
-
-  bot.sendMessage(msg.chat.id,
-    `✅ Symbol set: "${symbol}"\n\n` +
-    '**Step 4 of 5:** NFT Image\n' +
-    'Please enter the image URL for your NFT (or type "skip" for a default image):'
-  );
-}
-
-async function handleCustomNFTImageInput(msg: TelegramBot.Message) {
-  const user = msg.from!;
-  const imageInput = msg.text!.trim();
-
-  let imageUrl = 'https://via.placeholder.com/400x400/9C27B0/white?text=Custom+NFT';
-
-  if (imageInput.toLowerCase() !== 'skip') {
-    try {
-      new URL(imageInput); // Validate URL
-      imageUrl = imageInput;
-    } catch {
-      bot.sendMessage(msg.chat.id, '❌ Invalid URL format. Please enter a valid image URL or type "skip":');
-      return;
-    }
-  }
-
-  // **THIS IS WHERE CUSTOM NFT MINTING HAPPENS!**
-  userStates[user.id].state = '';
-
-  bot.sendMessage(msg.chat.id, '🔄 Minting your custom NFT... This may take a moment.');
-
-  try {
-    const { mintCustomNFT } = await import('../services/nftService');
-
-    const nftMetadata = {
-      name: userStates[user.id].data.nftData.name,
-      description: userStates[user.id].data.nftData.description,
-      symbol: userStates[user.id].data.nftData.name,
-      image: imageUrl,
-      attributes: [
-        { trait_type: 'Type', value: 'Custom Collectible' },
-        { trait_type: 'Creator', value: 'Admin' },
-        { trait_type: 'Rarity', value: 'Unique' }
-      ]
-    };
-
-    const result = await mintCustomNFT(user.id, nftMetadata);
-
-    if (result.success) {
-      bot.sendMessage(msg.chat.id,
-        `🎨 *Custom NFT Minted Successfully!*\n\n` +
-        `🏷️ **Name:** ${nftMetadata.name}\n` +
-        `📝 **Description:** ${nftMetadata.description}\n\n` +
-        `🔗 **Mint Address:** \`${result.mintAddress ? truncateAddress(result.mintAddress) : 'N/A'}\`\n\n` +
-        `✅ Your NFT has been created and is now in your collection!`,
-        {
-          parse_mode: 'Markdown',
-          reply_markup: {
-            inline_keyboard: [
-              [
-                { text: '🖼️ View My NFTs', callback_data: 'nfts' },
-                { text: '🎫 Back to Events', callback_data: 'events' }
-              ],
-              [
-                { text: '🏠 Main Menu', callback_data: 'main_menu' }
-              ]
-            ]
-          }
-        }
-      );
-    } else {
-      bot.sendMessage(msg.chat.id, `❌ Failed to mint NFT: ${result.error}`, {
-        reply_markup: {
-          inline_keyboard: [
-            [
-              { text: '🔄 Try Again', callback_data: 'admin_mint_custom' },
-              { text: '🎫 Back to Events', callback_data: 'events' }
-            ],
-            [
-              { text: '🏠 Main Menu', callback_data: 'main_menu' }
-            ]
-          ]
-        }
-      });
-    }
-  } catch (error) {
-    console.error('Error minting custom NFT:', error);
-    bot.sendMessage(msg.chat.id, '❌ Error minting NFT. Please try again later.', {
-      reply_markup: {
-        inline_keyboard: [
-          [
-            { text: '🔄 Try Again', callback_data: 'admin_mint_custom' },
-            { text: '🎫 Back to Events', callback_data: 'events' }
-          ],
-          [
-            { text: '🏠 Main Menu', callback_data: 'main_menu' }
-          ]
-        ]
-      }
-    });
-  }
-
-  // Clean up user state
-  if (userStates[user.id].data) {
-    delete userStates[user.id].data.nftData;
   }
 }
 
@@ -3880,7 +3851,7 @@ async function handleViewEventCallback(chatId: number, user: TelegramBot.User, m
         console.log(`🔗 Creating payment method selection button for "${event.name}" - ${cat.category} with callback_data: "${callbackData}"`);
 
         ticketButtons.push([{
-          text: `💳 Select Payment Method - ${cat.category} (${cat.price} SOL)`,
+          text: `💳 Buy Event - ${cat.category} (${cat.price} SOL)`,
           callback_data: callbackData
         }]);
       }
@@ -4239,9 +4210,9 @@ async function handleViewTicketCallback(chatId: number, user: TelegramBot.User, 
     const { getNFTMetadata } = await import('../utils/nftUtils');
     const { isAdmin } = await import('../services/nftService');
 
-    const ticket = await getNFTMetadata(mintAddress);
+    const nft = await getNFTMetadata(mintAddress);
 
-    if (!ticket) {
+    if (!nft) {
       await bot.editMessageText('❌ Ticket not found.', {
         chat_id: chatId,
         message_id: messageId,
@@ -4254,30 +4225,37 @@ async function handleViewTicketCallback(chatId: number, user: TelegramBot.User, 
       return;
     }
 
-    const eventDetails = ticket.eventDetails;
-    const isUsed = eventDetails?.isUsed ? '✅ Used' : '🎫 Valid';
+    // Check if this is actually an event ticket
+    if (!nft.isEventTicket || !nft.eventDetails) {
+      await bot.editMessageText('❌ This NFT is not a valid event ticket.', {
+        chat_id: chatId,
+        message_id: messageId,
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: '🔙 My Tickets', callback_data: 'my_tickets' }]
+          ]
+        }
+      });
+      return;
+    }
+
+    const eventDetails = nft.eventDetails;
+    const isUsed = eventDetails.isUsed ? '✅ Used' : '🎫 Valid';
     const userIsAdmin = isAdmin(user.id);
 
-    let ticketMessage = `🎫 **${ticket.name}**\n\n`;
-    ticketMessage += `📅 **Event:** ${eventDetails?.eventName || 'Unknown'}\n`;
-    ticketMessage += `🏷️ **Category:** ${eventDetails?.category || 'Unknown'}\n`;
-    ticketMessage += `📍 **Venue:** ${ticket.attributes?.find(attr => attr.trait_type === 'Venue')?.value || 'Unknown'}\n`;
-    ticketMessage += `💺 **Seat:** ${ticket.attributes?.find(attr => attr.trait_type === 'Seat')?.value || 'Unknown'}\n`;
-    ticketMessage += `🔒 **Status:** ${isUsed}\n\n`;
-    ticketMessage += `🔗 **NFT Address:** \`${truncateAddress(mintAddress)}\`\n`;
+    let ticketMessage = `🎫 **${nft.name}**\n\n`;
+    ticketMessage += `📅 **Event:** ${eventDetails.eventName || 'Unknown'}\n`;
+    ticketMessage += `🏷️ **Category:** ${eventDetails.category || 'Unknown'}\n`;
+    ticketMessage += `🔒 **Ticket Status:** ${isUsed}\n`;
+    ticketMessage += `\n🔗 **NFT Address:** \`${truncateAddress(mintAddress)}\`\n`;
 
-    if (ticket.image) {
-      ticketMessage += `\n🖼️ [View Ticket Image](${ticket.image})`;
+    if (nft.image) {
+      ticketMessage += `\n🖼️ [View Ticket Image](${nft.image})`;
     }
 
     const buttons: any[][] = [
       [{ text: '🔄 Transfer Ticket', callback_data: `transfer_ticket_${mintAddress}` }]
     ];
-
-    // Add admin validation button if user is admin and ticket is valid
-    if (userIsAdmin && !eventDetails?.isUsed) {
-      buttons.push([{ text: '✅ Validate Entry', callback_data: `validate_ticket_${mintAddress}` }]);
-    }
 
     buttons.push([{ text: '🔙 My Tickets', callback_data: 'my_tickets' }]);
 
@@ -4389,10 +4367,232 @@ async function handleValidateTicketCallback(chatId: number, user: TelegramBot.Us
       message_id: messageId,
       reply_markup: {
         inline_keyboard: [
-          [{ text: '🔙 Back', callback_data: `view_ticket_${mintAddress}` }]
+          [{ text: '🔙 Back to Ticket', callback_data: `view_ticket_${mintAddress}` }]
         ]
       }
     });
+  }
+}
+
+// Handle Transfer Ticket callback
+async function handleTransferTicketCallback(chatId: number, user: TelegramBot.User, messageId: number, mintAddress: string) {
+  try {
+    // Set user state for transfer ticket
+    if (!userStates[user.id]) userStates[user.id] = { state: '' };
+    userStates[user.id].state = 'transfer_ticket_entering_recipient';
+    userStates[user.id].transferTicketMint = mintAddress;
+    userStates[user.id].transferTicketSessionId = generateSessionId();
+
+    const message = `🔄 *Transfer Ticket*\n\n` +
+      `🎫 **Ticket:** \`${truncateAddress(mintAddress)}\`\n\n` +
+      `📝 Please enter the recipient's:\n` +
+      `• **Username** (e.g., @username)\n` +
+      `• **Wallet Address** (e.g., 4xQ...)\n\n` +
+      `💡 You can transfer to any user by their Telegram username or wallet address.`;
+
+    await bot.editMessageText(message, {
+      chat_id: chatId,
+      message_id: messageId,
+      parse_mode: 'Markdown',
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: '🔙 Cancel', callback_data: `view_ticket_${mintAddress}` }]
+        ]
+      }
+    });
+  } catch (error) {
+    console.error('Error handling transfer ticket callback:', error);
+    await bot.editMessageText('❌ Error initiating transfer. Please try again.', {
+      chat_id: chatId,
+      message_id: messageId,
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: '🔙 Back to Ticket', callback_data: `view_ticket_${mintAddress}` }]
+        ]
+      }
+    });
+  }
+}
+
+// Handle Transfer Ticket Recipient Input
+async function handleTransferTicketRecipientInput(msg: TelegramBot.Message) {
+  const chatId = msg.chat.id;
+  const user = msg.from;
+  const recipientInput = msg.text?.trim();
+
+  if (!user || !recipientInput) return;
+
+  try {
+    if (!userStates[user.id] || userStates[user.id].state !== 'transfer_ticket_entering_recipient') {
+      return;
+    }
+
+    const mintAddress = userStates[user.id].transferTicketMint;
+    if (!mintAddress) {
+      await bot.sendMessage(chatId, '❌ Transfer session expired. Please try again.');
+      return;
+    }
+
+    // Clean up user state
+    userStates[user.id].state = '';
+    delete userStates[user.id].transferTicketMint;
+    delete userStates[user.id].transferTicketRecipient;
+    delete userStates[user.id].transferTicketRecipientUser;
+    delete userStates[user.id].transferTicketSessionId;
+
+    // Find recipient by username or wallet address
+    let recipientUser = null;
+    let recipientWallet = null;
+
+    if (recipientInput.startsWith('@')) {
+      // Search by username
+      const username = recipientInput.substring(1);
+      const { findByUsername } = await import('../services/userService');
+      recipientUser = await findByUsername(username);
+      
+      if (recipientUser && recipientUser.wallet) {
+        recipientWallet = recipientUser.wallet.address;
+      }
+    } else if (recipientInput.length >= 32) {
+      // Search by wallet address - directly use the input as wallet address
+      recipientWallet = recipientInput;
+      // Try to find user by wallet address
+      const User = (await import('../models/User')).default;
+      recipientUser = await User.findOne({ 'wallet.address': recipientWallet });
+    }
+
+    if (!recipientWallet) {
+      await bot.sendMessage(chatId, 
+        '❌ Recipient not found or has no wallet.\n\n' +
+        'Please provide a valid:\n' +
+        '• Telegram username (e.g., @username)\n' +
+        '• Wallet address\n\n' +
+        '🔙 Use the transfer button again to retry.',
+        {
+          reply_markup: {
+            inline_keyboard: [
+              [{ text: '🔙 Back to Ticket', callback_data: `view_ticket_${mintAddress}` }]
+            ]
+          }
+        }
+      );
+      return;
+    }
+
+    // Check if recipient is the same as sender
+    const { getUserWallet } = await import('../services/walletService');
+    const senderWallet = await getUserWallet(user.id);
+    if (senderWallet && senderWallet.address === recipientWallet) {
+      await bot.sendMessage(chatId, 
+        '❌ You cannot transfer a ticket to yourself.',
+        {
+          reply_markup: {
+            inline_keyboard: [
+              [{ text: '🔙 Back to Ticket', callback_data: `view_ticket_${mintAddress}` }]
+            ]
+          }
+        }
+      );
+      return;
+    }
+
+    // Show final confirmation message (no amount needed for NFT tickets)
+    const recipientName = recipientUser ? 
+      (recipientUser.username ? `@${recipientUser.username}` : `${recipientUser.firstName || 'User'} ${recipientUser.lastName || ''}`.trim()) :
+      `Wallet: ${truncateAddress(recipientWallet)}`;
+
+    const confirmMessage = `🔄 *NFT Ticket Transfer Confirmation*\n\n` +
+      `🎫 **Ticket:** \`${truncateAddress(mintAddress)}\`\n` +
+      `👤 **From:** You (${truncateAddress(senderWallet?.address || 'Unknown')})\n` +
+      `👥 **To:** ${recipientName}\n` +
+      `📍 **Wallet:** \`${truncateAddress(recipientWallet)}\`\n\n` +
+      `⚠️ **This action cannot be undone!**\n` +
+      `The entire NFT ticket will be transferred to the recipient's wallet.\n\n` +
+      `*Note: NFT tickets are non-fungible - you can only transfer the complete ticket.*`;
+
+    // Store the transfer data in user state for final confirmation
+    if (!userStates[user.id]) userStates[user.id] = { state: '' };
+    userStates[user.id].state = 'transfer_ticket_final_confirmation';
+    userStates[user.id].transferTicketMint = mintAddress;
+    userStates[user.id].transferTicketRecipient = recipientWallet;
+    userStates[user.id].transferTicketRecipientUser = recipientUser;
+    userStates[user.id].transferTicketSessionId = Date.now().toString();
+    
+    await bot.sendMessage(chatId, confirmMessage, {
+      parse_mode: 'Markdown',
+      reply_markup: {
+        inline_keyboard: [
+          [
+            { text: '✅ Execute Transfer', callback_data: `execute_transfer_ticket_${userStates[user.id].transferTicketSessionId}` },
+            { text: '❌ Cancel', callback_data: `view_ticket_${mintAddress}` }
+          ]
+        ]
+      }
+    });
+
+  } catch (error) {
+    console.error('Error handling transfer ticket recipient input:', error);
+    await bot.sendMessage(chatId, '❌ Error processing recipient. Please try again.');
+    
+    // Clean up user state
+    if (userStates[user.id]) {
+      userStates[user.id].state = '';
+      delete userStates[user.id].transferTicketMint;
+      delete userStates[user.id].transferTicketRecipient;
+      delete userStates[user.id].transferTicketRecipientUser;
+      delete userStates[user.id].transferTicketSessionId;
+    }
+  }
+}
+
+// Handle Confirm Transfer Ticket callback (deprecated - kept for backward compatibility)
+async function handleConfirmTransferTicketCallback(chatId: number, user: TelegramBot.User, messageId: number, mintAddress: string, recipientWallet: string) {
+  try {
+    // This function is no longer needed for the new NFT transfer flow
+    // The transfer is now handled directly in handleTransferTicketRecipientInput
+    
+    await bot.editMessageText('🔄 *Processing Transfer...*\n\nPlease wait while we process your transfer request.', {
+      chat_id: chatId,
+      message_id: messageId,
+      parse_mode: 'Markdown'
+    });
+
+    // This function is deprecated - redirect to use the new transfer flow
+    await bot.editMessageText(
+      `ℹ️ *Transfer Flow Updated*\n\n` +
+      `🎫 **Ticket:** \`${truncateAddress(mintAddress)}\`\n` +
+      `👥 **To:** \`${truncateAddress(recipientWallet)}\`\n\n` +
+      `The transfer flow has been updated. Please use the transfer button again to complete the transfer.`,
+      {
+        chat_id: chatId,
+        message_id: messageId,
+        parse_mode: 'Markdown',
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: '🔄 Try Transfer Again', callback_data: `transfer_ticket_${mintAddress}` }],
+            [{ text: '🔙 Back to Ticket', callback_data: `view_ticket_${mintAddress}` }]
+          ]
+        }
+      }
+    );
+
+  } catch (error) {
+    console.error('Error handling confirm transfer ticket callback:', error);
+    await bot.editMessageText(
+      `❌ *Error*\n\n` +
+      `Failed to process transfer request.\n\n` +
+      `Error: ${error instanceof Error ? error.message : 'Unknown error occurred'}`,
+      {
+        chat_id: chatId,
+        message_id: messageId,
+        parse_mode: 'Markdown',
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: '🔙 Back to Ticket', callback_data: `view_ticket_${mintAddress}` }]
+          ]
+        }
+      }
+    );
   }
 }
 
@@ -4711,107 +4911,10 @@ async function handleDebugSpecificEventCallback(chatId: number, user: TelegramBo
   }
 }
 
-// Handle NFT Marketplace callback
-async function handleNFTMarketplaceCallback(chatId: number, user: TelegramBot.User, messageId: number) {
-  try {
-    const { getActiveNFTListings, getNFTListingsBySeller } = await import('../services/nftService');
 
-    const allListings = await getActiveNFTListings();
-    const userListings = await getNFTListingsBySeller(user.id);
-
-    let message = `🛒 *NFT Marketplace*\n\n`;
-    message += `📊 **Market Overview:**\n`;
-    message += `• Total Active Listings: ${allListings.length}\n`;
-    message += `• Your Listings: ${userListings.length}\n\n`;
-
-    if (allListings.length === 0) {
-      message += `*No NFTs are currently listed for sale.*\n\n`;
-      message += `Be the first to list an NFT!`;
-
-      const keyboard = {
-        reply_markup: {
-          inline_keyboard: [
-            [
-              { text: '📝 List My NFT', callback_data: 'nft_list_for_sale' },
-              { text: '🖼️ My NFTs', callback_data: 'nfts' }
-            ],
-            [{ text: '🔙 Back', callback_data: 'nfts' }]
-          ]
-        }
-      };
-
-      await bot.editMessageText(message, {
-        chat_id: chatId,
-        message_id: messageId,
-        parse_mode: 'Markdown',
-        reply_markup: keyboard.reply_markup
-      });
-      return;
-    }
-
-    // Show first few listings
-    const displayLimit = 5;
-    const displayListings = allListings.slice(0, displayLimit);
-
-    message += `🔥 **Featured Listings:**\n\n`;
-
-    displayListings.forEach((listing, index) => {
-      message += `${index + 1}. **NFT Listing**\n`;
-      message += `   💰 Price: ${listing.price} SOL\n`;
-      message += `   📊 Type: ${listing.listingType}\n`;
-      message += `   📅 Listed: ${listing.startTime.toLocaleDateString()}\n`;
-      if (listing.originalPrice) {
-        message += `   🏷️ Original: ${listing.originalPrice} SOL\n`;
-        message += `   🔄 Resale #${listing.resaleCount + 1}\n`;
-      }
-      message += `\n`;
-    });
-
-    if (allListings.length > displayLimit) {
-      message += `... and ${allListings.length - displayLimit} more listings\n\n`;
-    }
-
-    const keyboard = {
-      reply_markup: {
-        inline_keyboard: [
-          [
-            { text: '📋 View All Listings', callback_data: 'nft_marketplace_listings' },
-            { text: '📝 List My NFT', callback_data: 'nft_list_for_sale' }
-          ],
-          [
-            { text: '🛒 Buy NFT', callback_data: 'nft_marketplace_buy' },
-            { text: '📊 My Listings', callback_data: 'nft_my_listings' }
-          ],
-          [
-            { text: '🖼️ My NFTs', callback_data: 'nfts' },
-            { text: '🔙 Back', callback_data: 'nfts' }
-          ]
-        ]
-      }
-    };
-
-    await bot.editMessageText(message, {
-      chat_id: chatId,
-      message_id: messageId,
-      parse_mode: 'Markdown',
-      reply_markup: keyboard.reply_markup
-    });
-  } catch (error) {
-    console.error('Error handling NFT marketplace callback:', error);
-    await bot.editMessageText('❌ Error loading marketplace. Please try again.', {
-      chat_id: chatId,
-      message_id: messageId,
-      reply_markup: {
-        inline_keyboard: [
-          [{ text: '🔙 Back', callback_data: 'nfts' }]
-        ]
-      }
-    });
-  }
-}
 
 // Handle NFT List callback (filtered view)
-async function handleNFTListCallback(chatId: number, user: TelegramBot.User, messageId: number, filter: 'all' | 'tickets' | 'collectibles') {
+async function handleNFTListCallback(chatId: number, user: TelegramBot.User, messageId: number, filter: 'all' | 'tickets') {
   try {
     const { getUserNFTsWithFilters } = await import('../services/nftService');
 
@@ -4831,7 +4934,7 @@ async function handleNFTListCallback(chatId: number, user: TelegramBot.User, mes
             [
               { text: '🔄 All NFTs', callback_data: 'nft_list_all' },
               { text: '🎫 Tickets Only', callback_data: 'nft_list_tickets' },
-              { text: '🖼️ Collectibles Only', callback_data: 'nft_list_collectibles' }
+
             ],
             [{ text: '🔙 Back', callback_data: 'nfts' }]
           ]
@@ -4853,9 +4956,7 @@ async function handleNFTListCallback(chatId: number, user: TelegramBot.User, mes
       if (nft.isEventTicket && nft.eventDetails) {
         message += `   🎫 ${nft.eventDetails.category} Ticket\n`;
         message += `   📅 ${nft.eventDetails.eventName}\n`;
-        message += `   ${nft.eventDetails.isUsed ? '✅ Used' : '🎯 Valid'}\n`;
-      } else {
-        message += `   🖼️ Collectible\n`;
+                message += `   ${nft.eventDetails.isUsed ? '✅ Used' : '🎯 Valid'}\n`;
       }
       message += `   🔗 Mint: \`${truncateAddress(nft.mint)}\`\n\n`;
     });
@@ -4864,13 +4965,12 @@ async function handleNFTListCallback(chatId: number, user: TelegramBot.User, mes
       reply_markup: {
         inline_keyboard: [
           [
-            { text: '📝 List for Sale', callback_data: 'nft_list_for_sale' },
             { text: '👥 Transfer', callback_data: 'nft_transfer' }
           ],
           [
             { text: '🔄 All NFTs', callback_data: 'nft_list_all' },
             { text: '🎫 Tickets Only', callback_data: 'nft_list_tickets' },
-            { text: '🖼️ Collectibles Only', callback_data: 'nft_list_collectibles' }
+
           ],
           [{ text: '🔙 Back', callback_data: 'nfts' }]
         ]
@@ -5615,6 +5715,108 @@ async function handleOrangeMoneyAmountInput(msg: TelegramBot.Message) {
   } catch (error) {
     console.error('Error handling Orange Money amount input:', error);
     await bot.sendMessage(chatId, '❌ Error processing amount. Please try again.');
+  }
+}
+
+// This function is no longer needed for NFT transfers since they are non-fungible
+// Each user has exactly 1 ticket, so no amount input is required
+
+// Handle execute transfer ticket callback
+async function handleExecuteTransferTicketCallback(
+  chatId: number, 
+  user: TelegramBot.User, 
+  messageId: number, 
+  mintAddress: string, 
+  recipientWallet: string
+) {
+  try {
+    // Show processing message
+    await bot.editMessageText('🔄 *Processing NFT Ticket Transfer...*\n\nPlease wait while we transfer your NFT ticket.', {
+      chat_id: chatId,
+      message_id: messageId,
+      parse_mode: 'Markdown'
+    });
+
+    // Get admin private key for transfer
+    const adminPrivateKey = process.env.ADMIN_WALLET_PRIVATE_KEY;
+    if (!adminPrivateKey) {
+      throw new Error('Admin private key not configured');
+    }
+
+    // Get user's wallet
+    const { getUserWallet } = await import('../services/walletService');
+    const userWallet = await getUserWallet(user.id);
+    
+    if (!userWallet) {
+      throw new Error('User wallet not found');
+    }
+
+    // Get recipient user info from state
+    const userState = userStates[user.id];
+    const recipientUser = userState?.transferTicketRecipientUser;
+    
+    if (!recipientUser) {
+      throw new Error('Recipient user information not found');
+    }
+
+    // Import the correct NFT transfer function
+    const { transferNFTBetweenUsers } = await import('../utils/nftUtils');
+    
+    // Transfer the NFT ticket (entire ticket, no amount needed)
+    const transferResult = await transferNFTBetweenUsers(
+      mintAddress, 
+      userWallet.address, 
+      recipientWallet, 
+      user.id, 
+      recipientUser.telegramId, 
+      adminPrivateKey
+    );
+    
+    if (transferResult.success) {
+      // Update the message to show success
+      await bot.editMessageText(
+        `✅ *NFT Ticket Transfer Successful!*\n\n` +
+        `🎫 **Ticket:** \`${truncateAddress(mintAddress)}\`\n` +
+        `👤 **From:** You (${truncateAddress(userWallet.address)})\n` +
+        `👥 **To:** ${recipientUser.username ? `@${recipientUser.username}` : recipientUser.firstName || 'User'}\n` +
+        `📍 **Wallet:** \`${truncateAddress(recipientWallet)}\`\n\n` +
+        `🎉 The NFT ticket has been transferred successfully!\n` +
+        `Transaction: \`${transferResult.transactionSignature}\`\n\n` +
+        `The recipient can now view the ticket in their wallet.`,
+        {
+          chat_id: chatId,
+          message_id: messageId,
+          parse_mode: 'Markdown',
+          reply_markup: {
+            inline_keyboard: [
+              [{ text: '🔙 Back to My Tickets', callback_data: 'my_tickets' }]
+            ]
+          }
+        }
+      );
+    } else {
+      throw new Error(transferResult.error || 'Transfer failed');
+    }
+
+  } catch (error) {
+    console.error('Error executing NFT ticket transfer:', error);
+    await bot.editMessageText(
+      `❌ *NFT Transfer Failed*\n\n` +
+      `🎫 **Ticket:** \`${truncateAddress(mintAddress)}\`\n\n` +
+      `Error: ${error instanceof Error ? error.message : 'Unknown error occurred'}\n\n` +
+      `Please try again or contact support if the issue persists.`,
+      {
+        chat_id: chatId,
+        message_id: messageId,
+        parse_mode: 'Markdown',
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: '🔄 Try Again', callback_data: `transfer_ticket_${mintAddress}` }],
+            [{ text: '🔙 Back to Ticket', callback_data: `view_ticket_${mintAddress}` }]
+          ]
+        }
+      }
+    );
   }
 }
 

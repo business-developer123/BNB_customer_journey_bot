@@ -6,7 +6,6 @@ import { getUserWalletPrivateKey } from '../services/walletService';
 
 dotenv.config();
 
-const moralisApiKey = process.env.MORALIS_API_KEY;
 
 // --- Wallet Generation ---
 export function generateWallet() {

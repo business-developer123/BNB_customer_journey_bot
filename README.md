@@ -36,7 +36,6 @@ A Telegram bot for crypto trading with BNB wallet integration.
    - Transaction history with blockchain explorer links
 
 5. **NFT Management** 🆕
-   - Browse and view NFT collections with Moralis integration
    - Transfer NFTs between users (P2P NFT transfers)
    - Event ticketing system with blockchain validation
    - NFT metadata display with images and attributes

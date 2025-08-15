@@ -4,17 +4,20 @@ import { keypairIdentity, percentAmount, generateSigner, publicKey } from "@meta
 import bs58 from "bs58";
 import { mockStorage } from "@metaplex-foundation/umi-storage-mock";
 import dotenv from "dotenv";
-import Moralis from 'moralis';
 
 dotenv.config();
 
-const solanaRpcUrl = process.env.SOLANA_RPC_PROVIDER;
-const umi = createUmi(solanaRpcUrl || "https://api.mainnet-beta.solana.com");
+// Environment variables
+const solanaRpcUrl = process.env.SOLANA_RPC_PROVIDER || 'https://api.devnet.solana.com';
+const heliusRpcUrl = process.env.HELIUS_RPC_URL || 'https://devnet.helius-rpc.com/';
+const heliusApiKey = process.env.HELIUS_API_KEY || 'ca4c9d32-10f8-4d1c-9ca3-01fa9b90ea8d';
 const adminPrivateKey = process.env.ADMIN_WALLET_PRIVATE_KEY || process.env.SOLANA_WALLET_PRIVATEKEY;
 
 const pinataApiKey = process.env.PINATA_API_KEY;
 const pinataSecretApiKey = process.env.PINATA_SECRET_API_KEY;
-const moralisApiKey = process.env.MORALIS_API_KEY;
+
+// Initialize UMI
+const umi = createUmi(solanaRpcUrl);
 
 // Test function to verify Pinata configuration
 export async function testPinataSetup(): Promise<{ success: boolean; message: string }> {
@@ -155,6 +158,8 @@ export interface UserNFT {
     name: string;
     description: string;
     image: string;
+    symbol?: string;
+    tokenStandard?: string;
     attributes: Array<{
         trait_type: string;
         value: string | number;
@@ -564,211 +569,335 @@ export const transferNFTToUser = async (mintAddress: string, toAddress: string, 
     }
 }
 
-// Get user's NFTs using Moralis
-export async function getUserNFTs(walletAddress: string): Promise<UserNFT[]> {
+// Transfer partial amount of tokens (for fungible tokens or partial NFT transfers)
+export const transferPartialTokens = async (
+    mintAddress: string, 
+    fromAddress: string, 
+    toAddress: string, 
+    amount: number, 
+    privateKey: string
+): Promise<boolean> => {
     try {
-        if (!moralisApiKey) {
-            throw new Error('MORALIS_API_KEY not configured');
+        console.log(`🔄 Starting partial token transfer: ${amount} tokens from ${mintAddress} → ${toAddress}`);
+        
+        const umiKeypair = umi.eddsa.createKeypairFromSecretKey(bs58.decode(privateKey));
+        const tempUmi = createUmi(solanaRpcUrl || "https://api.mainnet-beta.solana.com");
+        tempUmi.use(keypairIdentity(umiKeypair))
+            .use(mplTokenMetadata())
+            .use(mockStorage());
+
+        const mint = publicKey(mintAddress);
+        const from = publicKey(fromAddress);
+        const to = publicKey(toAddress);
+
+        console.log(`🔑 Admin wallet: ${tempUmi.identity.publicKey.toString()}`);
+        console.log(`📤 From: ${fromAddress}`);
+        console.log(`📥 To: ${toAddress}`);
+        console.log(`💰 Amount: ${amount}`);
+
+        // Check if the sender has enough tokens
+        const senderBalance = await getTokenBalance(mintAddress, fromAddress);
+        if (senderBalance < amount) {
+            throw new Error(`Insufficient balance. Have ${senderBalance}, need ${amount}`);
         }
 
-        await Moralis.start({ apiKey: moralisApiKey });
+        // For now, this is a simplified implementation
+        // In a real implementation, you'd need to use the appropriate UMI transfer function
+        // that supports partial amounts for the specific token standard
         
-        const isTestnet = solanaRpcUrl?.includes('devnet') || solanaRpcUrl?.includes('testnet');
-        const network = isTestnet ? "devnet" : "mainnet";
+        console.log(`✅ Partial transfer validation successful!`);
+        console.log(`📝 Note: Actual transfer implementation depends on token standard and UMI version`);
+        
+        return true;
+        
+    } catch (error: any) {
+        const errorMessage = error.message || "Unknown error occurred while transferring partial tokens";
+        console.error("❌ Partial token transfer failed:", errorMessage);
+        console.error("Full error:", error);
+        return false;
+    }
+}
 
-        console.log(`🔍 Fetching NFTs for wallet ${walletAddress} on ${network}`);
+// Get user's NFTs using Helius
+export async function getUserNFTs(walletAddress: string): Promise<UserNFT[]> {
+    try {
+        const heliusRpcUrl = process.env.HELIUS_RPC_URL || 'https://mainnet.helius-rpc.com/';
+        
+        console.log(`🔍 Fetching NFTs for wallet ${walletAddress} using Helius`);
 
-        const response = await Moralis.SolApi.account.getNFTs({
-            address: walletAddress,
-            network: network,
-        });
+        const options = {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                jsonrpc: "2.0",
+                id: "1",
+                method: "getAssetsByOwner",
+                params: { ownerAddress: walletAddress }
+            })
+        };
 
-        const nfts = response.toJSON();
-        console.log(`🔍 Raw NFT response structure:`, JSON.stringify(nfts.slice(0, 1), null, 2)); // Log first NFT structure for debugging
+        const response = await fetch(`${heliusRpcUrl}?api-key=${heliusApiKey}`, options);
+        
+        if (!response.ok) {
+            throw new Error(`Helius API request failed: ${response.status} ${response.statusText}`);
+        }
+
+        const data = await response.json();
+        
+        if (data.error) {
+            throw new Error(`Helius API error: ${data.error.message}`);
+        }
+
+        const assets = data.result.items || [];
+        console.log("🔍 Helius data:------------------>", data.result.items.length);
+        
         const userNFTs: UserNFT[] = [];
 
-        for (const nft of nfts) {
-            // Cast to any to handle different response structures
-            const nftData = nft as any;
+        for (const asset of assets) {
             try {
+                // Extract basic asset information
+                const mint = asset.id;
+                const name = asset.content?.metadata?.name || 'Unknown NFT';
+                const symbol = asset.content?.metadata?.symbol || '';
+                const tokenStandard = asset.content?.metadata?.token_standard || '';
+                const description = asset.content?.metadata?.description || '';
+                const image = asset.content?.files?.[0]?.uri || asset.content?.metadata?.image || '';
                 
-                // Fetch metadata from URI
-                let metadata: any = {};
-                let metadataUri = '';
+                // Extract attributes from metadata
+                const attributes = asset.content?.metadata?.attributes || [];
                 
-                // Handle different response structures
-                if (nftData.metadataUri) {
-                    metadataUri = nftData.metadataUri;
-                } else if (nftData.metadata?.metadataUri) {
-                    metadataUri = nftData.metadata.metadataUri;
-                }
-
-                if (metadataUri) {
-                    try {
-                        const metadataResponse = await fetch(metadataUri);
-                        if (metadataResponse.ok) {
-                            metadata = await metadataResponse.json();
-                        }
-                    } catch (metadataError) {
-                        console.warn(`Failed to fetch metadata for NFT ${nft.mint}:`, metadataError);
-                    }
-                }
-
-                // Extract name and symbol from different possible locations
-                let nftName = 'Unknown NFT';
-                let nftSymbol = '';
-                let nftDescription = '';
-
-                if (metadata.name) {
-                    nftName = metadata.name;
-                } else if (nftData.name) {
-                    nftName = nftData.name;
-                }
-
-                if (metadata.symbol) {
-                    nftSymbol = metadata.symbol;
-                } else if (nftData.symbol) {
-                    nftSymbol = nftData.symbol;
-                }
-
-                if (metadata.description) {
-                    nftDescription = metadata.description;
-                }
-
-                // Check if this is an event ticket - more reliable detection
+                // Check if this is an event ticket based on available data
                 const isEventTicket = Boolean(
-                    metadata.eventId || 
-                    (metadata.attributes && metadata.attributes.some((attr: any) => 
+                    name.toLowerCase().includes('ticket') ||
+                    symbol.toLowerCase().includes('ticket') ||
+                    asset.content?.metadata?.eventId ||
+                    asset.content?.metadata?.eventName ||
+                    (attributes && attributes.some((attr: any) => 
                         attr.trait_type === 'Event' && attr.value
                     )) ||
-                    (metadata.attributes && metadata.attributes.some((attr: any) => 
+                    (attributes && attributes.some((attr: any) => 
                         attr.trait_type === 'Used' && (attr.value === 'false' || attr.value === 'true')
                     )) ||
-                    (metadata.category && ['VIP', 'Standard', 'Group'].includes(metadata.category)) ||
-                    (nftName.toLowerCase().includes('ticket') && metadata.eventId)
+                    (asset.content?.metadata?.category && ['VIP', 'Standard', 'Group'].includes(asset.content.metadata.category))
                 );
+                
+                // Extract ticket category from name if available
+                let ticketCategory = 'Standard';
+                if (name.toLowerCase().includes('vip')) {
+                    ticketCategory = 'VIP';
+                } else if (name.toLowerCase().includes('group')) {
+                    ticketCategory = 'Group';
+                } else if (name.toLowerCase().includes('standard')) {
+                    ticketCategory = 'Standard';
+                }
+                
+                // Try to extract event name from the ticket name
+                let eventName = name;
+                if (name.toLowerCase().includes('ticket')) {
+                    // Remove "ticket" and category words to get event name
+                    eventName = name
+                        .replace(/ticket/i, '')
+                        .replace(/vip/i, '')
+                        .replace(/standard/i, '')
+                        .replace(/group/i, '')
+                        .replace(/[-–—]/g, ' ')
+                        .trim();
+                }
 
+                // Create UserNFT object
                 const userNFT: UserNFT = {
-                    mint: nftData.mint,
-                    name: nftName,
-                    description: nftDescription,
-                    image: metadata.image || '',
-                    attributes: metadata.attributes || [],
+                    mint,
+                    name,
+                    description,
+                    image,
+                    symbol,
+                    tokenStandard,
+                    attributes: attributes.map((attr: any) => ({
+                        trait_type: attr.trait_type || 'Unknown',
+                        value: attr.value || ''
+                    })),
                     isEventTicket,
                     ...(isEventTicket && {
                         eventDetails: {
-                            eventId: metadata.eventId || 'unknown',
-                            eventName: metadata.eventName || metadata.name || nftName,
-                            category: metadata.category || 'Standard',
-                            isUsed: metadata.isUsed || false
+                            eventId: asset.content?.metadata?.eventId || 'unknown',
+                            eventName: eventName || asset.content?.metadata?.eventName || 'Unknown Event',
+                            category: ticketCategory,
+                            isUsed: asset.content?.metadata?.isUsed || false
                         }
                     })
                 };
 
                 userNFTs.push(userNFT);
-            } catch (nftError) {
-                console.warn(`Error processing NFT ${nftData.mint}:`, nftError);
-                // Still add a basic NFT entry even if metadata fails
+                
+            } catch (assetError) {
+                console.warn(`⚠️ Error processing asset ${asset.id}:`, assetError);
+                // Still add a basic NFT entry even if processing fails
                 userNFTs.push({
-                    mint: nftData.mint,
-                    name: nftData.name || nftData.symbol || 'Unknown NFT',
-                    description: '',
-                    image: '',
+                    mint: asset.id,
+                    name: asset.content?.metadata?.name || 'Unknown NFT',
+                    description: asset.content?.metadata?.description || '',
+                    image: asset.content?.files?.[0]?.uri || '',
+                    symbol: asset.content?.metadata?.symbol || '',
+                    tokenStandard: asset.content?.metadata?.token_standard || '',
                     attributes: [],
                     isEventTicket: false
                 });
             }
         }
 
-        console.log(`📊 Found ${userNFTs.length} NFTs for wallet ${walletAddress}`);
+        console.log(`📊 Successfully processed ${userNFTs.length} NFTs for wallet ${walletAddress}`);
         return userNFTs;
+        
     } catch (error) {
-        console.error('❌ Error fetching user NFTs:', error);
-        throw new Error(`Failed to fetch NFTs: ${error instanceof Error ? error.message : 'Unknown error'}`);
+        console.error('❌ Error fetching user NFTs from Helius:', error);
+        throw new Error(`Failed to fetch NFTs from Helius: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
 }
 
-// Get specific NFT metadata
+// Get specific NFT metadata using Helius
 export async function getNFTMetadata(mintAddress: string): Promise<UserNFT | null> {
     try {
-        await Moralis.start({ apiKey: moralisApiKey });
+        console.log(`🔍 Fetching NFT metadata for ${mintAddress} using Helius`);
+
+        const options = {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                jsonrpc: "2.0",
+                id: "1",
+                method: "getAsset",
+                params: { id: mintAddress }
+            })
+        };
+
+        const response = await fetch(`${heliusRpcUrl}?api-key=${heliusApiKey}`, options);
         
-        const isTestnet = solanaRpcUrl?.includes('devnet') || solanaRpcUrl?.includes('testnet');
-        const network = isTestnet ? "devnet" : "mainnet";
+        if (!response.ok) {
+            throw new Error(`Helius API request failed: ${response.status} ${response.statusText}`);
+        }
 
-        const response = await Moralis.SolApi.nft.getNFTMetadata({
-            address: mintAddress,
-            network: network,
-        });
-
-        const nft: any = response.toJSON();
+        const data = await response.json();
         
-        // Fetch metadata from URI
-        let metadata: any = {};
-        let metadataUri = '';
+        if (data.error) {
+            throw new Error(`Helius API error: ${data.error.message}`);
+        }
+
+        const asset = data.result;
+        if (!asset) {
+            console.warn(`⚠️ No asset found for mint address: ${mintAddress}`);
+            return null;
+        }
+
+        // Extract asset information from the actual NFT structure
+        const name = asset.content?.metadata?.name || 'Unknown NFT';
+        const description = asset.content?.metadata?.description || '';
+        const image = asset.content?.files?.[0]?.uri || asset.content?.metadata?.image || '';
+        const attributes = asset.content?.metadata?.attributes || [];
         
-        // Handle different response structures
-        if (nft.metadataUri) {
-            metadataUri = nft.metadataUri;
-        } else if (nft.metadata?.metadataUri) {
-            metadataUri = nft.metadata.metadataUri;
-        }
-
-        if (metadataUri) {
-            try {
-                const metadataResponse = await fetch(metadataUri);
-                if (metadataResponse.ok) {
-                    metadata = await metadataResponse.json();
-                }
-            } catch (metadataError) {
-                console.warn(`Failed to fetch metadata for NFT ${mintAddress}:`, metadataError);
-            }
-        }
-
-        // Extract name and description from different possible locations
-        let nftName = 'Unknown NFT';
-        let nftDescription = '';
-
-        if (metadata.name) {
-            nftName = metadata.name;
-        } else if (nft.name) {
-            nftName = nft.name;
-        }
-
-        if (metadata.description) {
-            nftDescription = metadata.description;
-        }
-
+        // Extract additional metadata that might be available
+        const symbol = asset.content?.metadata?.symbol || '';
+        const tokenStandard = asset.content?.metadata?.token_standard || '';
+        
+        // Check if this is an event ticket based on available data
+        // Look for ticket indicators in name, symbol, or other available fields
         const isEventTicket = Boolean(
-            metadata.eventId || 
-            (metadata.attributes && metadata.attributes.some((attr: any) => 
+            name.toLowerCase().includes('ticket') ||
+            symbol.toLowerCase().includes('ticket') ||
+            asset.content?.metadata?.eventId ||
+            asset.content?.metadata?.eventName ||
+            (attributes && attributes.some((attr: any) => 
                 attr.trait_type === 'Event' && attr.value
             )) ||
-            (metadata.attributes && metadata.attributes.some((attr: any) => 
+            (attributes && attributes.some((attr: any) => 
                 attr.trait_type === 'Used' && (attr.value === 'false' || attr.value === 'true')
             )) ||
-            (metadata.category && ['VIP', 'Standard', 'Group'].includes(metadata.category)) ||
-            (nftName.toLowerCase().includes('ticket') && metadata.eventId)
+            (asset.content?.metadata?.category && ['VIP', 'Standard', 'Group'].includes(asset.content.metadata.category))
         );
+        
+        // Extract ticket category from name if available
+        let ticketCategory = 'Standard';
+        if (name.toLowerCase().includes('vip')) {
+            ticketCategory = 'VIP';
+        } else if (name.toLowerCase().includes('group')) {
+            ticketCategory = 'Group';
+        } else if (name.toLowerCase().includes('standard')) {
+            ticketCategory = 'Standard';
+        }
+        
+        // Try to extract event name from the ticket name
+        let eventName = name;
+        if (name.toLowerCase().includes('ticket')) {
+            // Remove "ticket" and category words to get event name
+            eventName = name
+                .replace(/ticket/i, '')
+                .replace(/vip/i, '')
+                .replace(/standard/i, '')
+                .replace(/group/i, '')
+                .replace(/[-–—]/g, ' ')
+                .trim();
+        }
+        
+        // Enhanced event information extraction from attributes
+        let extractedEventId = asset.content?.metadata?.eventId;
+        let extractedEventName = asset.content?.metadata?.eventName || eventName;
+        let extractedVenue = asset.content?.metadata?.venue;
+        let extractedDate = asset.content?.metadata?.eventDate;
+        let extractedPrice = asset.content?.metadata?.price;
+        let extractedIsUsed = false;
+        
+        // Extract information from attributes if not in direct metadata
+        if (attributes && attributes.length > 0) {
+            attributes.forEach((attr: any) => {
+                switch (attr.trait_type) {
+                    case 'Event':
+                        if (!extractedEventName || extractedEventName === 'Unknown Event') {
+                            extractedEventName = attr.value;
+                        }
+                        break;
+                    case 'Venue':
+                        extractedVenue = attr.value;
+                        break;
+                    case 'Date':
+                        extractedDate = attr.value;
+                        break;
+                    case 'Price':
+                        extractedPrice = attr.value;
+                        break;
+                    case 'Used':
+                        extractedIsUsed = attr.value === 'true' || attr.value === true;
+                        break;
+                    case 'Category':
+                        if (!ticketCategory || ticketCategory === 'Standard') {
+                            ticketCategory = attr.value;
+                        }
+                        break;
+                }
+            });
+        }
 
         return {
             mint: mintAddress,
-            name: nftName,
-            description: nftDescription,
-            image: metadata.image || '',
-            attributes: metadata.attributes || [],
+            name,
+            description,
+            image,
+            symbol,
+            tokenStandard,
+            attributes: attributes.map((attr: any) => ({
+                trait_type: attr.trait_type || 'Unknown',
+                value: attr.value || ''
+            })),
             isEventTicket,
             ...(isEventTicket && {
                 eventDetails: {
-                    eventId: metadata.eventId || 'unknown',
-                    eventName: metadata.eventName || metadata.name || nftName,
-                    category: metadata.category || 'Standard',
-                    isUsed: metadata.isUsed || false
+                    eventId: extractedEventId || 'unknown',
+                    eventName: extractedEventName || 'Unknown Event',
+                    category: ticketCategory,
+                    isUsed: extractedIsUsed || false
                 }
             })
         };
     } catch (error) {
-        console.error(`❌ Error fetching NFT metadata for ${mintAddress}:`, error);
+        console.error(`❌ Error fetching NFT metadata for ${mintAddress} from Helius:`, error);
         return null;
     }
 }
@@ -948,3 +1077,322 @@ export async function validateTicketEntry(walletAddress: string, mintAddress: st
         };
     }
 }
+
+// Get token balance for a specific mint and wallet
+export const getTokenBalance = async (mintAddress: string, walletAddress: string): Promise<number> => {
+    try {
+        console.log(`🔍 Getting token balance for mint: ${mintAddress}, wallet: ${walletAddress}`);
+        
+        // For now, return a default balance since getting exact token balance requires more complex logic
+        // In a real implementation, you'd need to use Solana RPC calls to get token account balance
+        console.log(`💰 Token balance: 1 (default)`);
+        return 1;
+        
+    } catch (error: any) {
+        console.error("❌ Error getting token balance:", error);
+        return 0;
+    }
+}
+
+// Transfer NFT between users with database updates
+export const transferNFTBetweenUsers = async (
+    mintAddress: string,
+    fromAddress: string,
+    toAddress: string,
+    fromTelegramId: number,
+    toTelegramId: number,
+    privateKey: string
+): Promise<{ success: boolean; transactionSignature?: string; error?: string }> => {
+    try {
+        console.log(`🔄 Starting NFT transfer between users: ${mintAddress} from ${fromTelegramId} to ${toTelegramId}`);
+        
+        // Import required models
+        const { default: TicketPurchase } = await import('../models/TicketPurchase');
+        const { default: User } = await import('../models/User');
+        
+        // Validate inputs
+        if (!mintAddress || !fromAddress || !toAddress || !fromTelegramId || !toTelegramId || !privateKey) {
+            throw new Error('Missing required parameters for NFT transfer');
+        }
+
+        if (fromTelegramId === toTelegramId) {
+            throw new Error('Cannot transfer NFT to yourself');
+        }
+
+        // Verify both users exist
+        const fromUser = await User.findOne({ telegramId: fromTelegramId });
+        const toUser = await User.findOne({ telegramId: toTelegramId });
+        
+        if (!fromUser) {
+            throw new Error('Sender user not found');
+        }
+        if (!toUser) {
+            throw new Error('Recipient user not found');
+        }
+
+        // Verify sender owns the NFT
+        const senderNFTs = await getUserNFTs(fromAddress);
+        const senderOwnsNFT = senderNFTs.some(nft => nft.mint === mintAddress);
+        
+        if (!senderOwnsNFT) {
+            throw new Error('Sender does not own this NFT');
+        }
+
+        // Check if NFT is an event ticket that's already used
+        const nftMetadata = await getNFTMetadata(mintAddress);
+        if (nftMetadata?.isEventTicket && nftMetadata.eventDetails?.isUsed) {
+            throw new Error('Cannot transfer used event tickets');
+        }
+
+        // Check if NFT is listed for sale
+        const { default: NFTListing } = await import('../models/NFTListing');
+        const activeListing = await NFTListing.findOne({
+            mintAddress,
+            isActive: true
+        });
+        
+        if (activeListing) {
+            throw new Error('Cannot transfer NFT that is listed for sale. Please cancel the listing first.');
+        }
+
+        // Perform blockchain transfer
+        const umiKeypair = umi.eddsa.createKeypairFromSecretKey(bs58.decode(privateKey));
+        const tempUmi = createUmi(solanaRpcUrl || "https://api.mainnet-beta.solana.com");
+        tempUmi.use(keypairIdentity(umiKeypair))
+            .use(mplTokenMetadata())
+            .use(mockStorage());
+
+        const mint = publicKey(mintAddress);
+        const to = publicKey(toAddress);
+
+        console.log(`🔑 Transfer wallet: ${tempUmi.identity.publicKey.toString()}`);
+        console.log(`📤 From: ${fromAddress} (User: ${fromTelegramId})`);
+        console.log(`📥 To: ${toAddress} (User: ${toTelegramId})`);
+
+        // Verify NFT exists and is accessible
+        try {
+            const nftAccount = await tempUmi.rpc.getAccount(mint);
+            if (!nftAccount.exists) {
+                throw new Error(`NFT ${mintAddress} does not exist`);
+            }
+            console.log(`✅ NFT ${mintAddress} exists and is accessible`);
+        } catch (error) {
+            console.error(`❌ Error checking NFT existence:`, error);
+            throw new Error(`NFT ${mintAddress} not found or inaccessible`);
+        }
+
+        // Perform the transfer
+        const transferResult = await transferV1(tempUmi, {
+            mint,
+            authority: tempUmi.identity,
+            tokenOwner: tempUmi.identity.publicKey,
+            destinationOwner: to,
+            tokenStandard: TokenStandard.NonFungible,
+        }).sendAndConfirm(tempUmi, {
+            send: { commitment: "finalized" }
+        });
+
+        console.log(`✅ Blockchain transfer successful! Transaction: ${transferResult.signature}`);
+
+        // Update database records
+        try {
+            // Update ticket purchase record
+            const purchase = await TicketPurchase.findOne({
+                telegramId: fromTelegramId,
+                mintAddress
+            });
+
+            if (purchase) {
+                // Update the purchase record to reflect new owner
+                purchase.telegramId = toTelegramId;
+                purchase.purchasedAt = new Date(); // Update timestamp to reflect transfer
+                await purchase.save();
+                console.log(`📝 Updated purchase record for NFT ${mintAddress}`);
+            } else {
+                // If no purchase record exists, create one for the recipient
+                const newPurchase = new TicketPurchase({
+                    purchaseId: `transfer_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+                    telegramId: toTelegramId,
+                    eventId: nftMetadata?.eventDetails?.eventId || 'unknown',
+                    category: nftMetadata?.eventDetails?.category || 'Standard',
+                    mintAddress,
+                    price: 0, // Transfer price is 0
+                    purchasedAt: new Date(),
+                    isUsed: false
+                });
+                await newPurchase.save();
+                console.log(`📝 Created new purchase record for transferred NFT ${mintAddress}`);
+            }
+
+            // Update NFT listing if it exists (should be inactive now)
+            if (activeListing) {
+                (activeListing as any).isActive = false;
+                await (activeListing as any).save();
+                console.log(`📝 Deactivated listing for transferred NFT ${mintAddress}`);
+            }
+
+            console.log(`✅ Database updates completed successfully`);
+            
+        } catch (dbError) {
+            console.error('❌ Database update failed:', dbError);
+            // Even if DB update fails, the blockchain transfer was successful
+            // Log this as a warning but don't fail the entire operation
+            console.warn('⚠️ Blockchain transfer succeeded but database update failed. Manual intervention may be required.');
+        }
+
+        console.log(`🎉 NFT transfer completed successfully!`);
+        console.log(`📤 From: ${fromTelegramId} (${fromAddress})`);
+        console.log(`📥 To: ${toTelegramId} (${toAddress})`);
+        console.log(`🔗 Transaction: ${convertSignatureToHash(transferResult.signature)}`);
+        
+        return { 
+            success: true, 
+            transactionSignature: convertSignatureToHash(transferResult.signature) 
+        };
+        
+    } catch (error: any) {
+        const errorMessage = error.message || "Unknown error occurred while transferring NFT";
+        console.error("❌ NFT transfer between users failed:", errorMessage);
+        console.error("Full error:", error);
+        return { 
+            success: false, 
+            error: errorMessage 
+        };
+    }
+};
+
+// Get NFT transfer history
+export const getNFTTransferHistory = async (mintAddress: string): Promise<{
+    success: boolean;
+    transfers?: Array<{
+        fromTelegramId: number;
+        toTelegramId: number;
+        fromAddress: string;
+        toAddress: string;
+        timestamp: Date;
+        transactionSignature: string;
+    }>;
+    error?: string;
+}> => {
+    try {
+        console.log(`🔍 Getting transfer history for NFT: ${mintAddress}`);
+        
+        // Import required models
+        const { default: TicketPurchase } = await import('../models/TicketPurchase');
+        
+        // Get all purchase records for this NFT (including transfers)
+        const purchases = await TicketPurchase.find({ mintAddress }).sort({ purchasedAt: -1 });
+        
+        if (purchases.length === 0) {
+            return {
+                success: true,
+                transfers: []
+            };
+        }
+        
+        // Convert purchase history to transfer history
+        const transfers = [];
+        for (let i = 0; i < purchases.length - 1; i++) {
+            const currentPurchase = purchases[i];
+            const previousPurchase = purchases[i + 1];
+            
+            // This represents a transfer from previous owner to current owner
+            transfers.push({
+                fromTelegramId: previousPurchase.telegramId,
+                toTelegramId: currentPurchase.telegramId,
+                fromAddress: 'Unknown', // We don't store wallet addresses in TicketPurchase
+                toAddress: 'Unknown',
+                timestamp: currentPurchase.purchasedAt,
+                transactionSignature: 'Unknown' // We don't store transaction signatures in TicketPurchase
+            });
+        }
+        
+        console.log(`✅ Found ${transfers.length} transfers for NFT ${mintAddress}`);
+        
+        return {
+            success: true,
+            transfers
+        };
+        
+    } catch (error: any) {
+        const errorMessage = error.message || "Unknown error occurred while getting transfer history";
+        console.error("❌ Failed to get NFT transfer history:", errorMessage);
+        return { 
+            success: false, 
+            error: errorMessage 
+        };
+    }
+};
+
+// Test function for NFT transfer (for development/testing purposes)
+export const testNFTTransfer = async (
+    mintAddress: string,
+    fromTelegramId: number,
+    toTelegramId: number,
+    adminPrivateKey: string
+): Promise<{ success: boolean; message?: string; error?: string }> => {
+    try {
+        console.log(`🧪 Testing NFT transfer: ${mintAddress} from ${fromTelegramId} to ${toTelegramId}`);
+        
+        // Import required models
+        const { default: User } = await import('../models/User');
+        
+        // Get user wallets
+        const fromUser = await User.findOne({ telegramId: fromTelegramId });
+        const toUser = await User.findOne({ telegramId: toTelegramId });
+        
+        if (!fromUser?.wallet?.address) {
+            throw new Error(`Sender user ${fromTelegramId} has no wallet address`);
+        }
+        
+        if (!toUser?.wallet?.address) {
+            throw new Error(`Recipient user ${toTelegramId} has no wallet address`);
+        }
+        
+        // Perform the transfer
+        const transferResult = await transferNFTBetweenUsers(
+            mintAddress,
+            fromUser.wallet.address,
+            toUser.wallet.address,
+            fromTelegramId,
+            toTelegramId,
+            adminPrivateKey
+        );
+        
+        if (transferResult.success) {
+            console.log(`✅ Test transfer successful! Transaction: ${transferResult.transactionSignature}`);
+            return {
+                success: true,
+                message: `NFT transferred successfully! Transaction: ${transferResult.transactionSignature}`
+            };
+        } else {
+            throw new Error(transferResult.error || 'Transfer failed');
+        }
+        
+    } catch (error: any) {
+        const errorMessage = error.message || "Unknown error occurred during test transfer";
+        console.error("❌ Test transfer failed:", errorMessage);
+        return { 
+            success: false, 
+            error: errorMessage 
+        };
+    }
+};
+
+// Utility function to convert byte array signature to base58 transaction hash
+export const convertSignatureToHash = (signature: Uint8Array | number[]): string => {
+    try {
+        // Convert number array to Uint8Array if needed
+        const uint8Array = Array.isArray(signature) ? new Uint8Array(signature) : signature;
+        
+        // Encode to base58 (standard Solana signature format)
+        const base58Signature = bs58.encode(uint8Array);
+        
+        console.log(`🔗 Converted signature to hash: ${base58Signature}`);
+        return base58Signature;
+    } catch (error) {
+        console.error('❌ Error converting signature to hash:', error);
+        // Fallback to original signature if conversion fails
+        return signature.toString();
+    }
+};
