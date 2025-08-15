@@ -21,6 +21,23 @@ function truncateAddress(address: string, startLength: number = 4, endLength: nu
   return `${address.substring(0, startLength)}...${address.substring(address.length - endLength)}`;
 }
 
+// Helper function to create copyable address display
+function createCopyableAddress(address: string, startLength: number = 4, endLength: number = 4): string {
+  if (!address || address.length <= startLength + endLength + 3) {
+    return `\`${address}\``;
+  }
+  const truncated = `${address.substring(0, startLength)}...${address.substring(address.length - endLength)}`;
+  return `\`${truncated}\`\n📋 *Full Address:* \`${address}\``;
+}
+
+// Helper function to safely create copyable address with null check
+function createCopyableAddressSafe(address: string | undefined | null, startLength: number = 4, endLength: number = 4): string {
+  if (!address || typeof address !== 'string' || address.length === 0) {
+    return 'Not available';
+  }
+  return createCopyableAddress(address, startLength, endLength);
+}
+
 // Helper function to generate unique session IDs
 function generateSessionId(): string {
   return Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
@@ -182,7 +199,7 @@ async function handleStart(msg: TelegramBot.Message) {
         if (walletInfo) {
           walletStatus = `
 💰 *Wallet Status:* Active
-📍 *Address:* \`${truncateAddress(walletInfo.address)}\`
+📍 *Address:* ${createCopyableAddress(walletInfo.address)}
 🔐 *Type:* ${walletInfo.isCustom ? 'Custom Wallet' : 'Auto-generated'}
 💎 *SOL Balance:* ${parseFloat(walletInfo.balance).toFixed(6)} SOL
 `;
@@ -977,7 +994,7 @@ async function handleWalletCallback(chatId: number, user: TelegramBot.User, mess
       let walletMessage = `
 💰 *Your Wallet Information*
 
-📍 *Address:* \`${truncateAddress(walletInfo.address)}\`
+📍 *Address:* ${createCopyableAddress(walletInfo.address)}
 🔐 *Type:* ${walletInfo.isCustom ? 'Custom Wallet' : 'Auto-generated'}
 🌐 *Network:* ${networkInfo}
 
@@ -1043,7 +1060,7 @@ async function handleCreateWalletCallback(chatId: number, user: TelegramBot.User
     const successMessage = `
 🎉 *Wallet Created Successfully!*
 
-📍 *Address:* \`${truncateAddress(wallet.address)}\`
+📍 *Address:* ${createCopyableAddress(wallet.address)}
 🔐 *Type:* Auto-generated
 💰 *Balance:* 0 SOL
 
@@ -1207,7 +1224,7 @@ async function handleTokensCallback(chatId: number, user: TelegramBot.User, mess
       if (!walletInfo || !walletInfo.tokens || walletInfo.tokens.length === 0) {
         console.log(`❌ No tokens found for user ${user.id}`);
         let tokensMessage = `\n🪙 *All Token Balances*\n\n`;
-        tokensMessage += `📍 *Wallet Address:* \`${walletInfo && walletInfo.address ? truncateAddress(walletInfo.address) : ''}\`\n`;
+        tokensMessage += `📍 *Wallet Address:* ${walletInfo && walletInfo.address ? createCopyableAddress(walletInfo.address) : ''}\n`;
         tokensMessage += `🔐 *Wallet Type:* ${walletInfo ? (walletInfo.isCustom ? 'Custom Wallet' : 'Auto-generated') : ''}\n`;
         tokensMessage += `\n*Token Balances:* No tokens found in this wallet\n\n*Note:* Only common Solana tokens are checked. Your wallet may have other tokens not shown here.`;
         const keyboard = createWalletMenuKeyboard();
@@ -1247,7 +1264,7 @@ async function handleTokensCallback(chatId: number, user: TelegramBot.User, mess
     const { networkInfo } = getNetworkInfo();
 
     let tokensMessage = `\n🪙 *Token Information*\n\n`;
-    tokensMessage += `📍 *Wallet Address:* \`${userStates[user.id].walletAddress || ""}\`\n`;
+    tokensMessage += `📍 *Wallet Address:* ${createCopyableAddressSafe(userStates[user.id].walletAddress)}\n`;
     tokensMessage += `🔐 *Wallet Type:* ${userStates[user.id].isCustom ? 'Custom Wallet' : 'Auto-generated'}\n`;
     tokensMessage += `🌐 *Network:* ${networkInfo}\n`;
     tokensMessage += `\n*Token ${currentPage} of ${totalPages}*\n\n`;
@@ -1360,7 +1377,7 @@ async function handleP2PTransferCallback(chatId: number, user: TelegramBot.User,
     const { networkInfo } = getNetworkInfo();
 
     let p2pMessage = `👥 *P2P Transfer*\n\n`;
-    p2pMessage += `📍 *Your Wallet:* \`${truncateAddress(walletInfo.address)}\`\n`;
+    p2pMessage += `📍 *Your Wallet:* ${createCopyableAddress(walletInfo.address)}\n`;
     p2pMessage += `🌐 *Network:* ${networkInfo}\n\n`;
     p2pMessage += `*Enter recipient identifier:*\n`;
     p2pMessage += `• Telegram ID (e.g., your Telegram ID)\n`;
@@ -1421,7 +1438,7 @@ async function handleTransferTokenCallback(chatId: number, user: TelegramBot.Use
     const { networkInfo } = getNetworkInfo();
 
     let transferMessage = `💸 *Transfer Token*\n\n`;
-    transferMessage += `📍 *Your Wallet:* \`${truncateAddress(walletInfo.address)}\`\n`;
+    transferMessage += `📍 *Your Wallet:* ${createCopyableAddress(walletInfo.address)}\n`;
     transferMessage += `🌐 *Network:* ${networkInfo}\n\n`;
     transferMessage += `*Select a token to transfer:*\n\n`;
 
@@ -1558,7 +1575,7 @@ async function handleP2PRecipientInput(msg: TelegramBot.Message) {
     const tokens = userStates[user.id].transferTokens!;
     let tokenSelectionMessage = `✅ *Recipient Found!*\n\n`;
     tokenSelectionMessage += `👤 *Recipient:* ${validation.user!.firstName || validation.user!.username || 'User'}\n`;
-    tokenSelectionMessage += `💳 *Wallet:* \`${validation.walletAddress ? truncateAddress(validation.walletAddress) : 'N/A'}\`\n\n`;
+    tokenSelectionMessage += `💳 *Wallet:* ${validation.walletAddress ? createCopyableAddress(validation.walletAddress) : 'N/A'}\n\n`;
     tokenSelectionMessage += `*Select token to send:*\n\n`;
 
     tokens.forEach((token, index) => {
@@ -1628,7 +1645,7 @@ async function handleP2PAmountInput(msg: TelegramBot.Message) {
     // Show P2P confirmation message
     let confirmationMessage = `👥 *P2P Transfer Confirmation*\n\n`;
     confirmationMessage += `👤 *To:* ${recipientUser.firstName || recipientUser.username || 'User'}\n`;
-    confirmationMessage += `💳 *Wallet:* \`${recipientWallet ? truncateAddress(recipientWallet) : 'N/A'}\`\n`;
+    confirmationMessage += `💳 *Wallet:* ${recipientWallet ? createCopyableAddress(recipientWallet) : 'N/A'}\n`;
     confirmationMessage += `💰 *Token:* ${truncateAddress(selectedToken.token_address)}\n`;
     confirmationMessage += `🔢 *Amount:* ${transferAmount} ${truncateAddress(selectedToken.token_address)}\n`;
     confirmationMessage += `📊 *Your Balance:* ${userBalance} ${truncateAddress(selectedToken.token_address)}\n\n`;
@@ -1766,7 +1783,7 @@ async function handleP2PTransferConfirmation(chatId: number, user: TelegramBot.U
     successMessage += `👤 *To:* ${recipientUser.firstName || recipientUser.username || 'User'}\n`;
     successMessage += `💰 *Token:* ${truncateAddress(selectedToken.token_address)}\n`;
     successMessage += `🔢 *Amount:* ${amount} ${truncateAddress(selectedToken.token_address)}\n`;
-    successMessage += `💳 *Recipient Wallet:* \`${recipientWallet ? truncateAddress(recipientWallet) : 'N/A'}\`\n`;
+    successMessage += `💳 *Recipient Wallet:* ${recipientWallet ? createCopyableAddress(recipientWallet) : 'N/A'}\n`;
     successMessage += `🔗 *Transaction Hash:* \`${transactionResult.transactionHash}\`\n\n`;
 
     // Add Solscan link for the transaction based on network
@@ -1909,7 +1926,7 @@ async function handleNFTsCallback(chatId: number, user: TelegramBot.User, messag
       const { networkInfo } = getNetworkInfo();
 
       let nftMessage = `🖼️ *Your NFT Collection*\n\n`;
-      nftMessage += `📍 *Wallet:* \`${truncateAddress(walletInfo.address)}\`\n`;
+      nftMessage += `📍 *Wallet:* ${createCopyableAddress(walletInfo.address)}\n`;
       nftMessage += `🌐 *Network:* ${networkInfo}\n\n`;
       nftMessage += `📊 *Collection Summary:*\n`;
       nftMessage += `• Total NFTs: ${nftData.totalCount || 0}\n`;
@@ -2666,7 +2683,7 @@ async function handleRecipientAddressInput(msg: TelegramBot.Message) {
     const selectedToken = userStates[user.id].selectedToken;
     let transferMessage = `💸 *Transfer ${truncateAddress(selectedToken.token_address)}*\n\n`;
     transferMessage += `*Token:* ${truncateAddress(selectedToken.token_address)}\n`;
-    transferMessage += `*Recipient:* \`${recipientAddress ? truncateAddress(recipientAddress) : 'N/A'}\`\n`;
+    transferMessage += `*Recipient:* ${recipientAddress ? createCopyableAddress(recipientAddress) : 'N/A'}\n`;
     transferMessage += `*Your Balance:* ${selectedToken.balance} ${truncateAddress(selectedToken.token_address)}\n\n`;
     transferMessage += `*Please enter the amount to transfer:*\n`;
     transferMessage += `(Send the amount as a number)`;
@@ -2727,7 +2744,7 @@ async function handleAmountInput(msg: TelegramBot.Message) {
     let confirmationMessage = `💸 *Transfer Confirmation*\n\n`;
     confirmationMessage += `*Token:* ${truncateAddress(selectedToken.token_address)}\n`;
     confirmationMessage += `*Amount:* ${transferAmount} ${truncateAddress(selectedToken.token_address)}\n`;
-    confirmationMessage += `*Recipient:* \`${recipientAddress ? truncateAddress(recipientAddress) : 'N/A'}\`\n`;
+    confirmationMessage += `*Recipient:* ${recipientAddress ? createCopyableAddress(recipientAddress) : 'N/A'}\n`;
     confirmationMessage += `*Your Balance:* ${userBalance} ${truncateAddress(selectedToken.token_address)}\n\n`;
     confirmationMessage += `*Please confirm the transfer:*`;
 
@@ -2813,7 +2830,7 @@ async function handleTransferConfirmation(chatId: number, user: TelegramBot.User
     let successMessage = `✅ *Transfer Successful!*\n\n`;
     successMessage += `*Token:* ${truncateAddress(selectedToken.token_address)}\n`;
     successMessage += `*Amount:* ${amount} ${truncateAddress(selectedToken.token_address)}\n`;
-    successMessage += `*Recipient:* \`${recipientAddress ? truncateAddress(recipientAddress) : 'N/A'}\`\n`;
+    successMessage += `*Recipient:* ${recipientAddress ? createCopyableAddress(recipientAddress) : 'N/A'}\n`;
     successMessage += `*Transaction Hash:* \`${transactionResult.transactionHash}\`\n\n`;
 
     // Add Solscan link for the transaction based on network
@@ -2874,7 +2891,7 @@ async function handleWallet(msg: TelegramBot.Message) {
       let walletMessage = `
 💰 *Your Wallet Information*
 
-📍 *Address:* \`${truncateAddress(walletInfo.address)}\`
+📍 *Address:* ${createCopyableAddress(walletInfo.address)}
 🔐 *Type:* ${walletInfo.isCustom ? 'Custom Wallet' : 'Auto-generated'}
 
 💎 *Native Balance:*
@@ -2939,7 +2956,7 @@ async function handleCreateWallet(msg: TelegramBot.Message) {
     const successMessage = `
 🎉 *Wallet Created Successfully!*
 
-📍 *Address:* \`${truncateAddress(wallet.address)}\`
+📍 *Address:* ${createCopyableAddress(wallet.address)}
 🔐 *Type:* Auto-generated
 💰 *Balance:* 0 SOL
 
@@ -3037,7 +3054,7 @@ async function handlePrivateKeyInput(msg: TelegramBot.Message) {
     const successMessage = `
 ✅ *Wallet Imported Successfully!*
 
-📍 *Address:* \`${truncateAddress(wallet.address)}\`
+📍 *Address:* ${createCopyableAddress(wallet.address)}
 🔐 *Type:* Custom Wallet
 💰 *Balance:* ${balance} SOL
 
