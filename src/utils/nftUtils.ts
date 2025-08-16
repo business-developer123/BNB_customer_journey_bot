@@ -1094,40 +1094,49 @@ export const getTokenBalance = async (mintAddress: string, walletAddress: string
     }
 }
 
-// Transfer NFT between users with database updates
+// Transfer NFT between users with comprehensive database updates
 export const transferNFTBetweenUsers = async (
     mintAddress: string,
     fromAddress: string,
     toAddress: string,
     fromTelegramId: number,
-    toTelegramId: number,
-    privateKey: string
+    toTelegramId: number | null, // Make toTelegramId optional to support external transfers
+    privateKey: string,
+    transferReason?: string
 ): Promise<{ success: boolean; transactionSignature?: string; error?: string }> => {
     try {
-        console.log(`🔄 Starting NFT transfer between users: ${mintAddress} from ${fromTelegramId} to ${toTelegramId}`);
+        console.log(`🔄 Starting NFT transfer: ${mintAddress} from ${fromTelegramId} to ${toTelegramId || 'external wallet'}`);
         
         // Import required models
         const { default: TicketPurchase } = await import('../models/TicketPurchase');
+        const { default: TransferHistory } = await import('../models/TransferHistory');
         const { default: User } = await import('../models/User');
         
-        // Validate inputs
-        if (!mintAddress || !fromAddress || !toAddress || !fromTelegramId || !toTelegramId || !privateKey) {
+        // Validate required inputs
+        if (!mintAddress || !fromAddress || !toAddress || !fromTelegramId || !privateKey) {
             throw new Error('Missing required parameters for NFT transfer');
         }
 
-        if (fromTelegramId === toTelegramId) {
+        // Check if transferring to self (only if both users are registered)
+        if (toTelegramId && fromTelegramId === toTelegramId) {
             throw new Error('Cannot transfer NFT to yourself');
         }
 
-        // Verify both users exist
+        // Verify sender user exists
         const fromUser = await User.findOne({ telegramId: fromTelegramId });
-        const toUser = await User.findOne({ telegramId: toTelegramId });
-        
         if (!fromUser) {
             throw new Error('Sender user not found');
         }
-        if (!toUser) {
-            throw new Error('Recipient user not found');
+
+        // Handle recipient - could be registered user or external wallet
+        let toUser = null;
+        if (toTelegramId) {
+            toUser = await User.findOne({ telegramId: toTelegramId });
+            if (!toUser) {
+                throw new Error('Recipient user not found');
+            }
+        } else {
+            console.log('📤 Transferring to external wallet address:', toAddress);
         }
 
         // Verify sender owns the NFT
@@ -1149,10 +1158,25 @@ export const transferNFTBetweenUsers = async (
         const activeListing = await NFTListing.findOne({
             mintAddress,
             isActive: true
-        });
+        }).exec();
         
         if (activeListing) {
             throw new Error('Cannot transfer NFT that is listed for sale. Please cancel the listing first.');
+        }
+
+        // Get current ticket purchase record
+        const currentTicketRecord = await TicketPurchase.findOne({ 
+            mintAddress,
+            isActive: true
+        });
+
+        if (!currentTicketRecord) {
+            throw new Error('No active ticket record found for this NFT');
+        }
+
+        // Verify the sender is the current owner
+        if (currentTicketRecord.currentOwner !== fromTelegramId) {
+            throw new Error('Sender is not the current owner of this ticket');
         }
 
         // Perform blockchain transfer
@@ -1167,7 +1191,7 @@ export const transferNFTBetweenUsers = async (
 
         console.log(`🔑 Transfer wallet: ${tempUmi.identity.publicKey.toString()}`);
         console.log(`📤 From: ${fromAddress} (User: ${fromTelegramId})`);
-        console.log(`📥 To: ${toAddress} (User: ${toTelegramId})`);
+        console.log(`📥 To: ${toAddress} ${toUser ? `(User: ${toTelegramId})` : '(External Wallet)'}`);
 
         // Verify NFT exists and is accessible
         try {
@@ -1192,71 +1216,106 @@ export const transferNFTBetweenUsers = async (
             send: { commitment: "finalized" }
         });
 
-        console.log(`✅ Blockchain transfer successful! Transaction: ${transferResult.signature}`);
+        const signatureBase58 = convertSignatureToHash(transferResult.signature);
+        console.log(`✅ Ticket transfer successful! Transaction: ${signatureBase58}`);
 
         // Update database records
         try {
-            // Update ticket purchase record
-            const purchase = await TicketPurchase.findOne({
-                telegramId: fromTelegramId,
-                mintAddress
+            // 1. Create transfer history record
+            const transferHistoryRecord = new TransferHistory({
+                mintAddress,
+                fromTelegramId,
+                toTelegramId: toTelegramId || 0, // Use 0 for external wallets
+                fromWalletAddress: fromAddress,
+                toWalletAddress: toAddress,
+                transactionSignature: signatureBase58,
+                transferType: toTelegramId ? 'user_to_user' : 'user_to_system',
+                transferReason: transferReason || 'User transfer',
+                transferredAt: new Date(),
+                status: 'confirmed',
+                metadata: {
+                    eventId: currentTicketRecord.eventId,
+                    eventName: nftMetadata?.eventDetails?.eventName,
+                    category: currentTicketRecord.category,
+                    price: currentTicketRecord.price
+                }
             });
 
-            if (purchase) {
-                // Update the purchase record to reflect new owner
-                purchase.telegramId = toTelegramId;
-                purchase.purchasedAt = new Date(); // Update timestamp to reflect transfer
-                await purchase.save();
-                console.log(`📝 Updated purchase record for NFT ${mintAddress}`);
-            } else {
-                // If no purchase record exists, create one for the recipient
-                const newPurchase = new TicketPurchase({
-                    purchaseId: `transfer_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-                    telegramId: toTelegramId,
-                    eventId: nftMetadata?.eventDetails?.eventId || 'unknown',
-                    category: nftMetadata?.eventDetails?.category || 'Standard',
-                    mintAddress,
-                    price: 0, // Transfer price is 0
-                    purchasedAt: new Date(),
-                    isUsed: false
+            await transferHistoryRecord.save();
+            console.log(`✅ Created transfer history record for ${mintAddress}`);
+
+            // 2. Update ticket purchase record
+            if (toTelegramId) {
+                // Transfer to registered user - update the record
+                currentTicketRecord.currentOwner = toTelegramId;
+                currentTicketRecord.transferCount += 1;
+                currentTicketRecord.lastTransferredAt = new Date();
+                
+                // Add to transfer history array
+                currentTicketRecord.transferHistory.push({
+                    fromTelegramId,
+                    toTelegramId,
+                    transferredAt: new Date(),
+                    transactionSignature: signatureBase58
                 });
-                await newPurchase.save();
-                console.log(`📝 Created new purchase record for transferred NFT ${mintAddress}`);
+
+                await currentTicketRecord.save();
+                console.log(`✅ Updated ticket purchase record for ${mintAddress} - new owner: ${toTelegramId}`);
+            } else {
+                // Transfer to external wallet - mark as inactive
+                currentTicketRecord.isActive = false;
+                currentTicketRecord.transferCount += 1;
+                currentTicketRecord.lastTransferredAt = new Date();
+                
+                // Add to transfer history array
+                currentTicketRecord.transferHistory.push({
+                    fromTelegramId,
+                    toTelegramId: 0, // External wallet
+                    transferredAt: new Date(),
+                    transactionSignature: signatureBase58
+                });
+
+                await currentTicketRecord.save();
+                console.log(`✅ Marked ticket as inactive for external transfer: ${mintAddress}`);
             }
 
-            // Update NFT listing if it exists (should be inactive now)
+            // 3. Update NFT resale record if exists
+            const { default: NFTResale } = await import('../models/NFTResale');
+            const resaleRecord = await NFTResale.findOne({ 
+                mintAddress,
+                sellerTelegramId: fromTelegramId 
+            });
+
+            if (resaleRecord) {
+                resaleRecord.sellerTelegramId = toTelegramId || 0;
+                resaleRecord.timestamp = new Date();
+                await resaleRecord.save();
+                console.log(`✅ Updated NFT resale record for ${mintAddress}`);
+            }
+
+            // 4. Deactivate any active listings
             if (activeListing) {
                 (activeListing as any).isActive = false;
                 await (activeListing as any).save();
-                console.log(`📝 Deactivated listing for transferred NFT ${mintAddress}`);
+                console.log(`✅ Deactivated NFT listing for ${mintAddress}`);
             }
 
-            console.log(`✅ Database updates completed successfully`);
-            
         } catch (dbError) {
-            console.error('❌ Database update failed:', dbError);
-            // Even if DB update fails, the blockchain transfer was successful
-            // Log this as a warning but don't fail the entire operation
-            console.warn('⚠️ Blockchain transfer succeeded but database update failed. Manual intervention may be required.');
+            console.error('⚠️ Database update failed, but blockchain transfer was successful:', dbError);
+            // Don't fail the transfer if database update fails
+            // The blockchain transfer is the source of truth
         }
 
-        console.log(`🎉 NFT transfer completed successfully!`);
-        console.log(`📤 From: ${fromTelegramId} (${fromAddress})`);
-        console.log(`📥 To: ${toTelegramId} (${toAddress})`);
-        console.log(`🔗 Transaction: ${convertSignatureToHash(transferResult.signature)}`);
-        
-        return { 
-            success: true, 
-            transactionSignature: convertSignatureToHash(transferResult.signature) 
+        return {
+            success: true,
+            transactionSignature: signatureBase58
         };
-        
+
     } catch (error: any) {
-        const errorMessage = error.message || "Unknown error occurred while transferring NFT";
-        console.error("❌ NFT transfer between users failed:", errorMessage);
-        console.error("Full error:", error);
-        return { 
-            success: false, 
-            error: errorMessage 
+        console.error('❌ NFT transfer failed:', error);
+        return {
+            success: false,
+            error: error.message || 'Unknown error occurred during transfer'
         };
     }
 };

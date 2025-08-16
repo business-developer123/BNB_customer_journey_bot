@@ -43,22 +43,7 @@ function generateSessionId(): string {
   return Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
 }
 
-// Helper function to clean up expired transfer ticket sessions
-function cleanupExpiredTransferSessions() {
-  const now = Date.now();
-  const sessionTimeout = 30 * 60 * 1000; // 30 minutes
-  
-  Object.keys(userStates).forEach(userId => {
-    const userState = userStates[parseInt(userId)];
-    if (userState && userState.transferTicketSessionId && userState.transferTicketMint) {
-      // If user has been in transfer state for more than 30 minutes, clean up
-      if (userState.state === 'transfer_ticket_entering_recipient') {
-        // This is a simple cleanup - in production you might want to store timestamps
-        // For now, we'll clean up when the session is used or when explicitly cleaned
-      }
-    }
-  });
-}
+
 
 // Helper function to determine network and get network info
 function getNetworkInfo() {
@@ -101,7 +86,6 @@ const userStates: {
     transferTicketMint?: string;
     transferTicketRecipient?: string;
     transferTicketRecipientUser?: any;
-    transferTicketSessionId?: string;
   }
 } = {};
 
@@ -535,7 +519,6 @@ async function handleCallbackQuery(query: TelegramBot.CallbackQuery) {
         delete userStates[user.id].transferTicketMint;
         delete userStates[user.id].transferTicketRecipient;
         delete userStates[user.id].transferTicketRecipientUser;
-        delete userStates[user.id].transferTicketSessionId;
       }
       await handleViewTicketCallback(chatId, user, messageId, mintAddress);
       return;
@@ -550,37 +533,60 @@ async function handleCallbackQuery(query: TelegramBot.CallbackQuery) {
       await handleTransferTicketCallback(chatId, user, messageId, mintAddress);
       return;
     }
+    if (data.startsWith('cancel_transfer_ticket_')) {
+      const mintAddress = data.replace('cancel_transfer_ticket_', '');
+      // Clean up transfer state when cancelling
+      if (userStates[user.id]) {
+        delete userStates[user.id].transferTicketMint;
+        delete userStates[user.id].transferTicketRecipient;
+        delete userStates[user.id].transferTicketRecipientUser;
+        userStates[user.id].state = '';
+      }
+      await handleViewTicketCallback(chatId, user, messageId, mintAddress);
+      return;
+    }
     if (data.startsWith('confirm_transfer_ticket_')) {
-      const sessionId = data.replace('confirm_transfer_ticket_', '');
       const userState = userStates[user.id];
       
-      if (userState && userState.transferTicketMint && userState.transferTicketRecipient && userState.transferTicketSessionId === sessionId) {
+      if (userState && userState.transferTicketMint && userState.transferTicketRecipient) {
         await handleConfirmTransferTicketCallback(chatId, user, messageId, userState.transferTicketMint, userState.transferTicketRecipient);
         
         // Clean up the transfer ticket state
         delete userState.transferTicketMint;
         delete userState.transferTicketRecipient;
-        delete userState.transferTicketSessionId;
+        delete userState.transferTicketRecipientUser;
       } else {
-        console.error('Invalid or expired confirm_transfer_ticket callback data:', data);
+        console.error('Invalid transfer ticket state:', userState);
         await bot.answerCallbackQuery(query.id, { text: '❌ Transfer session expired. Please try again.' });
       }
       return;
     }
-    if (data.startsWith('execute_transfer_ticket_')) {
-      const sessionId = data.replace('execute_transfer_ticket_', '');
+    if (data === 'execute_transfer_ticket') {
       const userState = userStates[user.id];
       
-      if (userState && userState.transferTicketMint && userState.transferTicketRecipient && userState.transferTicketRecipientUser && userState.transferTicketSessionId === sessionId) {
+      console.log('🔍 execute_transfer_ticket callback - userState:', {
+        state: userState?.state,
+        transferTicketMint: userState?.transferTicketMint,
+        transferTicketRecipient: userState?.transferTicketRecipient,
+        transferTicketRecipientUser: userState?.transferTicketRecipientUser
+      });
+      
+      // Validate that we have the required state for transfer
+      if (userState && 
+          userState.state === 'transfer_ticket_final_confirmation' &&
+          userState.transferTicketMint && 
+          userState.transferTicketRecipient) {
+        
+        // Allow transfers even if transferTicketRecipientUser is null (external wallet transfer)
         await handleExecuteTransferTicketCallback(chatId, user, messageId, userState.transferTicketMint, userState.transferTicketRecipient);
         
         // Clean up the transfer ticket state
         delete userState.transferTicketMint;
         delete userState.transferTicketRecipient;
         delete userState.transferTicketRecipientUser;
-        delete userState.transferTicketSessionId;
+        userState.state = '';
       } else {
-        console.error('Invalid or expired execute_transfer_ticket callback data:', data);
+        console.error('Invalid transfer ticket state:', userState);
         await bot.answerCallbackQuery(query.id, { text: '❌ Transfer session expired. Please try again.' });
       }
       return;
@@ -653,7 +659,6 @@ async function handleCallbackQuery(query: TelegramBot.CallbackQuery) {
           delete userStates[user.id].transferTicketMint;
           delete userStates[user.id].transferTicketRecipient;
           delete userStates[user.id].transferTicketRecipientUser;
-          delete userStates[user.id].transferTicketSessionId;
         }
         await handleMainMenuCallback(chatId, user, messageId);
         break;
@@ -663,7 +668,6 @@ async function handleCallbackQuery(query: TelegramBot.CallbackQuery) {
           delete userStates[user.id].transferTicketMint;
           delete userStates[user.id].transferTicketRecipient;
           delete userStates[user.id].transferTicketRecipientUser;
-          delete userStates[user.id].transferTicketSessionId;
         }
         await handleNFTsCallback(chatId, user, messageId);
         break;
@@ -692,7 +696,6 @@ async function handleCallbackQuery(query: TelegramBot.CallbackQuery) {
           delete userStates[user.id].transferTicketMint;
           delete userStates[user.id].transferTicketRecipient;
           delete userStates[user.id].transferTicketRecipientUser;
-          delete userStates[user.id].transferTicketSessionId;
         }
         await handleMyTicketsCallback(chatId, user, messageId);
         break;
@@ -3557,7 +3560,7 @@ async function handleEventPhotoUpload(msg: TelegramBot.Message) {
   }
 
   try {
-    bot.sendMessage(msg.chat.id, '�� Uploading image to IPFS... This may take a moment.');
+    bot.sendMessage(msg.chat.id, '⬆️ Uploading image to IPFS... This may take a moment.');
 
     // Get the highest resolution photo
     const photo = msg.photo[msg.photo.length - 1];
@@ -4398,7 +4401,6 @@ async function handleTransferTicketCallback(chatId: number, user: TelegramBot.Us
     if (!userStates[user.id]) userStates[user.id] = { state: '' };
     userStates[user.id].state = 'transfer_ticket_entering_recipient';
     userStates[user.id].transferTicketMint = mintAddress;
-    userStates[user.id].transferTicketSessionId = generateSessionId();
 
     const message = `🔄 *Transfer Ticket*\n\n` +
       `🎫 **Ticket:** \`${truncateAddress(mintAddress)}\`\n\n` +
@@ -4445,17 +4447,15 @@ async function handleTransferTicketRecipientInput(msg: TelegramBot.Message) {
     }
 
     const mintAddress = userStates[user.id].transferTicketMint;
+    console.log("mintAddress -", mintAddress);
+    
     if (!mintAddress) {
       await bot.sendMessage(chatId, '❌ Transfer session expired. Please try again.');
       return;
     }
 
-    // Clean up user state
-    userStates[user.id].state = '';
-    delete userStates[user.id].transferTicketMint;
-    delete userStates[user.id].transferTicketRecipient;
-    delete userStates[user.id].transferTicketRecipientUser;
-    delete userStates[user.id].transferTicketSessionId;
+    // Don't clean up state yet - keep it for the transfer process
+    // State will be cleaned up after successful transfer or explicit cancellation
 
     // Find recipient by username or wallet address
     let recipientUser = null;
@@ -4529,18 +4529,33 @@ async function handleTransferTicketRecipientInput(msg: TelegramBot.Message) {
 
     // Store the transfer data in user state for final confirmation
     if (!userStates[user.id]) userStates[user.id] = { state: '' };
+    
+    // Ensure all required fields are set
     userStates[user.id].state = 'transfer_ticket_final_confirmation';
     userStates[user.id].transferTicketMint = mintAddress;
     userStates[user.id].transferTicketRecipient = recipientWallet;
-    userStates[user.id].transferTicketRecipientUser = recipientUser;
-    userStates[user.id].transferTicketSessionId = Date.now().toString();
+    userStates[user.id].transferTicketRecipientUser = recipientUser; // Can be null for external wallet transfers
+    
+    console.log('🔍 Transfer ticket state set:', {
+      state: userStates[user.id].state,
+      transferTicketMint: userStates[user.id].transferTicketMint,
+      transferTicketRecipient: userStates[user.id].transferTicketRecipient,
+      transferTicketRecipientUser: userStates[user.id].transferTicketRecipientUser
+    });
+    
+    // Validate that the state was set correctly
+    if (userStates[user.id].state !== 'transfer_ticket_final_confirmation' ||
+        !userStates[user.id].transferTicketMint ||
+        !userStates[user.id].transferTicketRecipient) {
+      throw new Error('Failed to set transfer ticket state correctly');
+    }
     
     await bot.sendMessage(chatId, confirmMessage, {
       parse_mode: 'Markdown',
       reply_markup: {
         inline_keyboard: [
           [
-            { text: '✅ Execute Transfer', callback_data: `execute_transfer_ticket_${userStates[user.id].transferTicketSessionId}` },
+            { text: '✅ Execute Transfer', callback_data: 'execute_transfer_ticket' },
             { text: '❌ Cancel', callback_data: `view_ticket_${mintAddress}` }
           ]
         ]
@@ -4557,7 +4572,6 @@ async function handleTransferTicketRecipientInput(msg: TelegramBot.Message) {
       delete userStates[user.id].transferTicketMint;
       delete userStates[user.id].transferTicketRecipient;
       delete userStates[user.id].transferTicketRecipientUser;
-      delete userStates[user.id].transferTicketSessionId;
     }
   }
 }
@@ -5772,12 +5786,32 @@ async function handleExecuteTransferTicketCallback(
     const userState = userStates[user.id];
     const recipientUser = userState?.transferTicketRecipientUser;
     
+    // Handle case where recipientUser might be null (external wallet transfer)
     if (!recipientUser) {
-      throw new Error('Recipient user information not found');
+      console.log('Transfer to external wallet address - no recipient user found in database');
+    } else {
+      console.log('Transfer to registered user:', {
+        telegramId: recipientUser.telegramId,
+        username: recipientUser.username,
+        firstName: recipientUser.firstName,
+        lastName: recipientUser.lastName
+      });
     }
 
     // Import the correct NFT transfer function
     const { transferNFTBetweenUsers } = await import('../utils/nftUtils');
+    
+    // Prepare recipient data for transfer
+    const recipientTelegramId = recipientUser?.telegramId || null;
+    
+    console.log('🔍 Transfer parameters:', {
+      mintAddress,
+      fromWallet: userWallet.address,
+      toWallet: recipientWallet,
+      fromUserId: user.id,
+      toUserId: recipientTelegramId,
+      hasRecipientUser: !!recipientUser
+    });
     
     // Transfer the NFT ticket (entire ticket, no amount needed)
     const transferResult = await transferNFTBetweenUsers(
@@ -5785,17 +5819,29 @@ async function handleExecuteTransferTicketCallback(
       userWallet.address, 
       recipientWallet, 
       user.id, 
-      recipientUser.telegramId, 
+      recipientTelegramId, // Handle null recipientUser for external transfers
       adminPrivateKey
     );
     
     if (transferResult.success) {
+      // Clean up transfer state after successful transfer
+      if (userStates[user.id]) {
+        delete userStates[user.id].transferTicketMint;
+        delete userStates[user.id].transferTicketRecipient;
+        delete userStates[user.id].transferTicketRecipientUser;
+        userStates[user.id].state = '';
+      }
+
       // Update the message to show success
+      const recipientName = recipientUser ? 
+        (recipientUser.username ? `@${recipientUser.username}` : `${recipientUser.firstName || 'User'} ${recipientUser.lastName || ''}`.trim()) :
+        `External Wallet: ${truncateAddress(recipientWallet)}`;
+
       await bot.editMessageText(
         `✅ *NFT Ticket Transfer Successful!*\n\n` +
         `🎫 **Ticket:** \`${truncateAddress(mintAddress)}\`\n` +
         `👤 **From:** You (${truncateAddress(userWallet.address)})\n` +
-        `👥 **To:** ${recipientUser.username ? `@${recipientUser.username}` : recipientUser.firstName || 'User'}\n` +
+        `👥 **To:** ${recipientName}\n` +
         `📍 **Wallet:** \`${truncateAddress(recipientWallet)}\`\n\n` +
         `🎉 The NFT ticket has been transferred successfully!\n` +
         `Transaction: \`${transferResult.transactionSignature}\`\n\n` +
@@ -5817,10 +5863,29 @@ async function handleExecuteTransferTicketCallback(
 
   } catch (error) {
     console.error('Error executing NFT ticket transfer:', error);
+    
+    // Clean up transfer state on error as well
+    if (userStates[user.id]) {
+      delete userStates[user.id].transferTicketMint;
+      delete userStates[user.id].transferTicketRecipient;
+      delete userStates[user.id].transferTicketRecipientUser;
+      userStates[user.id].state = '';
+    }
+    
+    // Provide more helpful error messages
+    let errorMessage = 'Unknown error occurred';
+    if (error instanceof Error) {
+      errorMessage = error.message;
+    } else if (typeof error === 'string') {
+      errorMessage = error;
+    }
+    
     await bot.editMessageText(
       `❌ *NFT Transfer Failed*\n\n` +
-      `🎫 **Ticket:** \`${truncateAddress(mintAddress)}\`\n\n` +
-      `Error: ${error instanceof Error ? error.message : 'Unknown error occurred'}\n\n` +
+      `🎫 **Ticket:** \`${truncateAddress(mintAddress)}\`\n` +
+      `👤 **From:** User ID: ${user.id}\n` +
+      `👥 **To:** \`${truncateAddress(recipientWallet)}\`\n\n` +
+      `Error: ${errorMessage}\n\n` +
       `Please try again or contact support if the issue persists.`,
       {
         chat_id: chatId,
