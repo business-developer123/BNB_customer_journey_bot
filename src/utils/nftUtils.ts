@@ -1164,18 +1164,23 @@ export const transferNFTBetweenUsers = async (
             throw new Error('Cannot transfer NFT that is listed for sale. Please cancel the listing first.');
         }
 
-        // Get current ticket purchase record
-        const currentTicketRecord = await TicketPurchase.findOne({ 
+        // Get current ticket purchase record - look for any record with this mint address
+        let currentTicketRecord = await TicketPurchase.findOne({ 
             mintAddress,
             isActive: true
         });
 
+        // If no active record found, look for any record with this mint address
         if (!currentTicketRecord) {
-            throw new Error('No active ticket record found for this NFT');
+            currentTicketRecord = await TicketPurchase.findOne({ mintAddress });
+            if (!currentTicketRecord) {
+                throw new Error('No ticket record found for this NFT');
+            }
+            console.log(`⚠️ Found inactive ticket record for ${mintAddress}, will reactivate for transfer`);
         }
 
-        // Verify the sender is the current owner
-        if (currentTicketRecord.currentOwner !== fromTelegramId) {
+        // Verify the sender is the current owner or has permission to transfer
+        if (currentTicketRecord.currentOwner !== fromTelegramId && currentTicketRecord.telegramId !== fromTelegramId) {
             throw new Error('Sender is not the current owner of this ticket');
         }
 
@@ -1229,7 +1234,7 @@ export const transferNFTBetweenUsers = async (
                 fromWalletAddress: fromAddress,
                 toWalletAddress: toAddress,
                 transactionSignature: signatureBase58,
-                transferType: toTelegramId ? 'user_to_user' : 'user_to_system',
+                transferType: toTelegramId ? 'user_to_user' : 'user_to_external',
                 transferReason: transferReason || 'User transfer',
                 transferredAt: new Date(),
                 status: 'confirmed',
@@ -1244,10 +1249,12 @@ export const transferNFTBetweenUsers = async (
             await transferHistoryRecord.save();
             console.log(`✅ Created transfer history record for ${mintAddress}`);
 
-            // 2. Update ticket purchase record
+            // 2. Handle ticket purchase records
             if (toTelegramId) {
-                // Transfer to registered user - update the record
-                currentTicketRecord.currentOwner = toTelegramId;
+                // Transfer to registered user
+                
+                // First, mark the current record as inactive
+                currentTicketRecord.isActive = false;
                 currentTicketRecord.transferCount += 1;
                 currentTicketRecord.lastTransferredAt = new Date();
                 
@@ -1260,7 +1267,28 @@ export const transferNFTBetweenUsers = async (
                 });
 
                 await currentTicketRecord.save();
-                console.log(`✅ Updated ticket purchase record for ${mintAddress} - new owner: ${toTelegramId}`);
+                console.log(`✅ Marked current ticket record as inactive for ${mintAddress}`);
+
+                // Create a new active ticket record for the recipient
+                const newTicketRecord = new TicketPurchase({
+                    purchaseId: `TICKET_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+                    telegramId: toTelegramId, // Recipient's Telegram ID
+                    eventId: currentTicketRecord.eventId,
+                    category: currentTicketRecord.category,
+                    mintAddress: mintAddress,
+                    price: currentTicketRecord.price,
+                    purchasedAt: new Date(), // New purchase date for the recipient
+                    isUsed: false,
+                    currentOwner: toTelegramId, // Recipient is now the current owner
+                    originalOwner: currentTicketRecord.originalOwner, // Keep track of original purchaser
+                    transferCount: 0, // Reset transfer count for new owner
+                    isActive: true, // This is now the active record
+                    transferHistory: [] // Start fresh transfer history
+                });
+
+                await newTicketRecord.save();
+                console.log(`✅ Created new active ticket record for recipient ${toTelegramId} - ${mintAddress}`);
+
             } else {
                 // Transfer to external wallet - mark as inactive
                 currentTicketRecord.isActive = false;
@@ -1453,5 +1481,161 @@ export const convertSignatureToHash = (signature: Uint8Array | number[]): string
         console.error('❌ Error converting signature to hash:', error);
         // Fallback to original signature if conversion fails
         return signature.toString();
+    }
+};
+
+// Get transfer history for a specific user
+export const getUserTransferHistory = async (telegramId: number): Promise<{
+    success: boolean;
+    receivedTransfers?: Array<{
+        mintAddress: string;
+        fromTelegramId: number;
+        fromUsername?: string;
+        fromFirstName?: string;
+        fromLastName?: string;
+        transferredAt: Date;
+        transactionSignature: string;
+        eventName?: string;
+        category?: string;
+        price?: number;
+    }>;
+    sentTransfers?: Array<{
+        mintAddress: string;
+        toTelegramId: number;
+        toUsername?: string;
+        toFirstName?: string;
+        toLastName?: string;
+        transferredAt: Date;
+        transactionSignature: string;
+        eventName?: string;
+        category?: string;
+        price?: number;
+    }>;
+    error?: string;
+}> => {
+    try {
+        console.log(`🔍 Getting transfer history for user: ${telegramId}`);
+        
+        // Import required models
+        const { default: TransferHistory } = await import('../models/TransferHistory');
+        const { default: User } = await import('../models/User');
+        
+        // Get transfers where user is recipient (only user-to-user transfers)
+        const receivedTransfers = await TransferHistory.find({
+            toTelegramId: telegramId,
+            status: 'confirmed',
+            transferType: 'user_to_user'
+        }).sort({ transferredAt: -1 });
+        
+        // Get transfers where user is sender
+        const sentTransfers = await TransferHistory.find({
+            fromTelegramId: telegramId,
+            status: 'confirmed'
+        }).sort({ transferredAt: -1 });
+        
+        // Get user details for sender/recipient IDs
+        const userIds = new Set([
+            ...receivedTransfers.map(t => t.fromTelegramId),
+            ...sentTransfers.map(t => t.toTelegramId).filter(id => id !== null) as number[]
+        ]);
+        
+        const users = await User.find({ telegramId: { $in: Array.from(userIds) } });
+        const userMap = new Map(users.map(u => [u.telegramId, u]));
+        
+        // Process received transfers
+        const processedReceivedTransfers = receivedTransfers.map(transfer => {
+            const fromUser = userMap.get(transfer.fromTelegramId);
+            return {
+                mintAddress: transfer.mintAddress,
+                fromTelegramId: transfer.fromTelegramId,
+                fromUsername: fromUser?.username,
+                fromFirstName: fromUser?.firstName,
+                fromLastName: fromUser?.lastName,
+                transferredAt: transfer.transferredAt,
+                transactionSignature: transfer.transactionSignature,
+                eventName: transfer.metadata?.eventName,
+                category: transfer.metadata?.category,
+                price: transfer.metadata?.price
+            };
+        });
+        
+        // Process sent transfers (filter out external wallet transfers)
+        const processedSentTransfers = sentTransfers
+            .filter(transfer => transfer.toTelegramId !== null)
+            .map(transfer => {
+                const toUser = userMap.get(transfer.toTelegramId!);
+                return {
+                    mintAddress: transfer.mintAddress,
+                    toTelegramId: transfer.toTelegramId!,
+                    toUsername: toUser?.username,
+                    toFirstName: toUser?.firstName,
+                    toLastName: toUser?.lastName,
+                    transferredAt: transfer.transferredAt,
+                    transactionSignature: transfer.transactionSignature,
+                    eventName: transfer.metadata?.eventName,
+                    category: transfer.metadata?.category,
+                    price: transfer.metadata?.price
+                };
+            });
+        
+        console.log(`✅ Found ${processedReceivedTransfers.length} received transfers and ${processedSentTransfers.length} sent transfers for user ${telegramId}`);
+        
+        return {
+            success: true,
+            receivedTransfers: processedReceivedTransfers,
+            sentTransfers: processedSentTransfers
+        };
+        
+    } catch (error: any) {
+        const errorMessage = error.message || "Unknown error occurred while getting user transfer history";
+        console.error("❌ Failed to get user transfer history:", errorMessage);
+        return { 
+            success: false, 
+            error: errorMessage 
+        };
+    }
+};
+
+// Get current owner of an NFT from database
+export const getNFTCurrentOwner = async (mintAddress: string): Promise<{
+    success: boolean;
+    currentOwner?: number;
+    isActive?: boolean;
+    error?: string;
+}> => {
+    try {
+        console.log(`🔍 Getting current owner for NFT: ${mintAddress}`);
+        
+        // Import required models
+        const { default: TicketPurchase } = await import('../models/TicketPurchase');
+        
+        // Find the active ticket record for this NFT
+        const ticketRecord = await TicketPurchase.findOne({
+            mintAddress,
+            isActive: true
+        });
+        
+        if (!ticketRecord) {
+            return {
+                success: false,
+                error: 'No active ticket record found for this NFT'
+            };
+        }
+        
+        console.log(`✅ Found current owner for NFT ${mintAddress}: ${ticketRecord.currentOwner}`);
+        
+        return {
+            success: true,
+            currentOwner: ticketRecord.currentOwner,
+            isActive: ticketRecord.isActive
+        };
+        
+    } catch (error: any) {
+        const errorMessage = error.message || "Unknown error occurred while getting NFT current owner";
+        console.error("❌ Failed to get NFT current owner:", errorMessage);
+        return { 
+            success: false, 
+            error: errorMessage 
+        };
     }
 };

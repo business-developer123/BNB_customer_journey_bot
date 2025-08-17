@@ -2,30 +2,68 @@
 
 ## Overview
 
-The NFT transfer system allows users to transfer NFT tickets between each other while maintaining proper database synchronization and ownership tracking. When an NFT is transferred:
+The NFT transfer system allows users to transfer their NFT tickets to other registered users or external wallets. The system handles both blockchain transfers and comprehensive database updates to maintain accurate ownership records.
 
-1. **Blockchain Transfer**: The NFT is transferred on the Solana blockchain
-2. **Database Update**: The `TicketPurchase` record is updated to reflect the new owner
-3. **User Experience**: The sender no longer sees the ticket, the recipient now sees it
-4. **Transfer History**: Complete transfer trail is maintained for audit purposes
+## Key Features
 
-## Key Functions
+- **User-to-User Transfers**: Transfer tickets between registered bot users
+- **External Wallet Transfers**: Transfer tickets to external Solana wallets
+- **Complete Database Tracking**: Maintains transfer history and ownership records
+- **Automatic Ticket Management**: Creates new ticket records for recipients
+- **Transfer History**: Tracks all transfers with metadata
 
-### 1. `transferNFTBetweenUsers`
+## How It Works
 
-**Location**: `src/utils/nftUtils.ts`
+### 1. Transfer Process Flow
 
-**Purpose**: Comprehensive NFT transfer function that handles both blockchain and database operations
+1. **Validation**: Verify sender owns the NFT and has permission to transfer
+2. **Blockchain Transfer**: Execute the actual NFT transfer on Solana
+3. **Database Updates**: Update ownership records and create transfer history
+4. **Ticket Management**: Mark old ticket as inactive, create new active ticket for recipient
 
-**Parameters**:
-- `mintAddress`: The NFT's mint address
-- `fromAddress`: Sender's wallet address
-- `toAddress`: Recipient's wallet address  
+### 2. Database Schema Changes
+
+#### TicketPurchase Model
+- `currentOwner`: Current owner's Telegram ID
+- `originalOwner`: Original purchaser's Telegram ID  
+- `transferCount`: Number of times transferred
+- `lastTransferredAt`: When last transferred
+- `isActive`: Whether ticket is currently active
+- `transferHistory`: Array of transfer records
+
+#### TransferHistory Model
 - `fromTelegramId`: Sender's Telegram ID
-- `toTelegramId`: Recipient's Telegram ID
-- `privateKey`: Admin private key for blockchain operations
+- `toTelegramId`: Recipient's Telegram ID (null for external wallets)
+- `transferType`: Type of transfer (user_to_user, user_to_external, etc.)
+- `metadata`: Event details, category, price
+- `status`: Transfer status (pending, confirmed, failed)
 
-**Returns**:
+### 3. Transfer Types
+
+- **user_to_user**: Transfer between registered bot users
+- **user_to_external**: Transfer to external wallet
+- **system_to_user**: System-generated transfers
+- **user_to_system**: User transfers to system
+
+## API Functions
+
+### `transferNFTBetweenUsers`
+
+Main function for transferring NFTs between users.
+
+```typescript
+const result = await transferNFTBetweenUsers(
+    mintAddress,        // NFT mint address
+    fromAddress,        // Sender's wallet address
+    toAddress,          // Recipient's wallet address
+    fromTelegramId,     // Sender's Telegram ID
+    toTelegramId,       // Recipient's Telegram ID (null for external)
+    privateKey,         // Admin private key for blockchain operations
+    transferReason      // Optional reason for transfer
+);
+```
+
+**Returns:**
 ```typescript
 {
     success: boolean;
@@ -34,106 +72,124 @@ The NFT transfer system allows users to transfer NFT tickets between each other 
 }
 ```
 
-**Features**:
-- ✅ Validates both users exist
-- ✅ Verifies sender owns the NFT
-- ✅ Checks if NFT is listed for sale (prevents transfer)
-- ✅ Prevents transfer of used event tickets
-- ✅ Performs blockchain transfer
-- ✅ Updates database records
-- ✅ Handles edge cases gracefully
+### `getUserTransferHistory`
 
-### 2. `getNFTTransferHistory`
+Get transfer history for a specific user.
 
-**Purpose**: Retrieves complete transfer history for an NFT
+```typescript
+const history = await getUserTransferHistory(telegramId);
+```
 
-**Returns**: Array of transfer records with sender/recipient details and timestamps
-
-### 3. `testNFTTransfer`
-
-**Purpose**: Test function for development and testing purposes
-
-## Database Changes
-
-### TicketPurchase Collection
-
-**Before Transfer**:
-```json
+**Returns:**
+```typescript
 {
-    "telegramId": 123456789,  // Sender's ID
-    "mintAddress": "NFT123...",
-    "purchasedAt": "2024-01-01T00:00:00Z"
+    success: boolean;
+    receivedTransfers?: Array<TransferRecord>;
+    sentTransfers?: Array<TransferRecord>;
+    error?: string;
 }
 ```
 
-**After Transfer**:
-```json
+### `getNFTCurrentOwner`
+
+Get current owner of an NFT from database.
+
+```typescript
+const owner = await getNFTCurrentOwner(mintAddress);
+```
+
+**Returns:**
+```typescript
 {
-    "telegramId": 987654321,  // Recipient's ID
-    "mintAddress": "NFT123...",
-    "purchasedAt": "2024-01-15T12:00:00Z"  // Updated timestamp
+    success: boolean;
+    currentOwner?: number;
+    isActive?: boolean;
+    error?: string;
 }
 ```
 
-### NFTListing Collection (if applicable)
+## Database Operations
 
-**Before Transfer**:
-```json
-{
-    "mintAddress": "NFT123...",
-    "isActive": true
-}
+### When Transferring to Registered User
+
+1. **Mark Current Ticket Inactive**:
+   ```typescript
+   currentTicketRecord.isActive = false;
+   currentTicketRecord.transferCount += 1;
+   currentTicketRecord.lastTransferredAt = new Date();
+   ```
+
+2. **Create New Active Ticket for Recipient**:
+   ```typescript
+   const newTicketRecord = new TicketPurchase({
+       telegramId: toTelegramId,
+       currentOwner: toTelegramId,
+       originalOwner: currentTicketRecord.originalOwner,
+       transferCount: 0,
+       isActive: true
+   });
+   ```
+
+3. **Create Transfer History Record**:
+   ```typescript
+   const transferHistoryRecord = new TransferHistory({
+       fromTelegramId,
+       toTelegramId,
+       transferType: 'user_to_user',
+       status: 'confirmed'
+   });
+   ```
+
+### When Transferring to External Wallet
+
+1. **Mark Ticket Inactive**:
+   ```typescript
+   currentTicketRecord.isActive = false;
+   currentTicketRecord.transferCount += 1;
+   ```
+
+2. **Create Transfer History**:
+   ```typescript
+   transferType: 'user_to_external',
+   toTelegramId: 0  // External wallet indicator
+   ```
+
+## Error Handling
+
+### Common Errors
+
+- **"No active ticket record found for this NFT"**: Ticket doesn't exist or is already transferred
+- **"Sender is not the current owner"**: User doesn't have permission to transfer
+- **"Cannot transfer used event tickets"**: Ticket has already been used
+- **"Cannot transfer NFT that is listed for sale"**: Cancel listing before transfer
+
+### Error Recovery
+
+The system is designed to be resilient:
+- Blockchain transfers are the source of truth
+- Database failures don't prevent successful transfers
+- Comprehensive logging for debugging
+
+## Testing
+
+### Test File: `test_transfer.js`
+
+Run the test to verify transfer functionality:
+
+```bash
+node test_transfer.js
 ```
 
-**After Transfer**:
-```json
-{
-    "mintAddress": "NFT123...",
-    "isActive": false  // Deactivated
-}
-```
-
-## User Experience Flow
-
-### 1. Transfer Initiation
-- User requests NFT transfer
-- System validates ownership and eligibility
-- System checks for active listings
-
-### 2. Blockchain Transfer
-- NFT is transferred on Solana blockchain
-- Transaction is confirmed and signature recorded
-
-### 3. Database Synchronization
-- `TicketPurchase` record is updated with new owner
-- `NFTListing` is deactivated if it exists
-- Transfer timestamp is recorded
-
-### 4. User Interface Updates
-- **Sender**: Ticket disappears from their events list
-- **Recipient**: Ticket appears in their events list
-- Both users can verify ownership through blockchain
-
-## Security Features
-
-### Ownership Validation
-- Verifies sender actually owns the NFT
-- Checks blockchain ownership before database updates
-- Prevents unauthorized transfers
-
-### Transfer Restrictions
-- Cannot transfer used event tickets
-- Cannot transfer NFTs listed for sale
-- Cannot transfer to yourself
-
-### Database Integrity
-- Atomic operations where possible
-- Fallback handling for partial failures
-- Audit trail maintained
+The test simulates a complete transfer process:
+1. Creates test users and ticket
+2. Simulates transfer database operations
+3. Verifies final state
+4. Cleans up test data
 
 ## Usage Examples
 
-### Basic Transfer
+### Basic User-to-User Transfer
+
 ```typescript
 import { transferNFTBetweenUsers } from './src/utils/nftUtils';
 
@@ -141,8 +197,8 @@ const result = await transferNFTBetweenUsers(
     'NFT_MINT_ADDRESS',
     'SENDER_WALLET_ADDRESS',
     'RECIPIENT_WALLET_ADDRESS',
-    123456789,  // Sender Telegram ID
-    987654321,  // Recipient Telegram ID
+    12345,  // Sender Telegram ID
+    67890,  // Recipient Telegram ID
     'ADMIN_PRIVATE_KEY'
 );
 
@@ -153,100 +209,84 @@ if (result.success) {
 }
 ```
 
-### Get Transfer History
-```typescript
-import { getNFTTransferHistory } from './src/utils/nftUtils';
+### Get User's Transfer History
 
-const history = await getNFTTransferHistory('NFT_MINT_ADDRESS');
+```typescript
+import { getUserTransferHistory } from './src/utils/nftUtils';
+
+const history = await getUserTransferHistory(12345);
 if (history.success) {
-    history.transfers?.forEach(transfer => {
-        console.log(`From: ${transfer.fromTelegramId} To: ${transfer.toTelegramId}`);
-    });
+    console.log('Received transfers:', history.receivedTransfers?.length);
+    console.log('Sent transfers:', history.sentTransfers?.length);
 }
 ```
 
-## Testing
+## Security Considerations
 
-### Test File
-Use `test-nft-transfer.js` to test the transfer functionality:
+1. **Ownership Verification**: Only current owners can transfer tickets
+2. **Blockchain Validation**: Verifies NFT ownership on-chain
+3. **Admin Key Usage**: Uses admin private key for blockchain operations
+4. **Transfer History**: Complete audit trail of all transfers
 
-```bash
-# Set environment variable
-export ADMIN_WALLET_PRIVATE_KEY="your_private_key"
+## Performance Optimizations
 
-# Run test
-node test-nft-transfer.js
-```
-
-### Test Parameters
-- Update `mintAddress` with actual NFT mint address
-- Set `fromTelegramId` and `toTelegramId` with real user IDs
-- Ensure both users have wallet addresses in the database
-
-## Error Handling
-
-### Common Errors
-- **"Sender does not own this NFT"**: Ownership validation failed
-- **"Cannot transfer used event tickets"**: Ticket already used
-- **"Cannot transfer NFT that is listed for sale"**: Active listing exists
-- **"User not found"**: Invalid Telegram ID
-
-### Recovery
-- Blockchain transfers are atomic and cannot be partially completed
-- Database updates are handled gracefully with error logging
-- Failed database updates don't invalidate successful blockchain transfers
-
-## Integration Points
-
-### Telegram Bot
-The transfer system integrates with the Telegram bot through:
-- `/transfer` command for user-initiated transfers
-- Admin commands for system transfers
-- User verification and wallet management
-
-### NFT Service
-The main NFT service uses the transfer functions for:
-- User-to-user transfers
-- System transfers (e.g., after purchase)
-- Transfer validation and history
+1. **Database Indexes**: Optimized queries for current owners and transfers
+2. **Batch Operations**: Efficient database updates
+3. **Async Processing**: Non-blocking transfer operations
+4. **Connection Pooling**: Efficient database connections
 
 ## Monitoring and Logging
 
-### Transfer Logs
-- All transfer attempts are logged with detailed information
-- Success/failure status is recorded
-- Transaction signatures are stored for verification
+### Log Levels
 
-### Database Monitoring
-- Transfer operations update audit fields
-- Ownership changes are tracked
-- Failed operations are logged for investigation
+- **🔄**: Transfer operations
+- **✅**: Successful operations
+- **❌**: Errors and failures
+- **⚠️**: Warnings and non-critical issues
+
+### Key Metrics
+
+- Transfer success rate
+- Database operation performance
+- Blockchain transaction confirmation times
+- User transfer patterns
+
+## Troubleshooting
+
+### Common Issues
+
+1. **Transfer Fails with "No active ticket record"**
+   - Check if ticket exists in database
+   - Verify ticket is not already transferred
+   - Check database connection
+
+2. **Recipient Doesn't See Transferred Ticket**
+   - Verify new ticket record was created
+   - Check `currentOwner` and `isActive` fields
+   - Ensure recipient's wallet address is correct
+
+3. **Database Update Failures**
+   - Check MongoDB connection
+   - Verify schema compatibility
+   - Check for constraint violations
+
+### Debug Commands
+
+```typescript
+// Check ticket status
+const ticket = await TicketPurchase.findOne({ mintAddress, isActive: true });
+
+// Check transfer history
+const transfers = await TransferHistory.find({ mintAddress });
+
+// Verify ownership
+const owner = await getNFTCurrentOwner(mintAddress);
+```
 
 ## Future Enhancements
 
-### Planned Features
-- **Batch Transfers**: Transfer multiple NFTs at once
-- **Transfer Limits**: Rate limiting for transfers
-- **Advanced Validation**: Additional business rule checks
-- **Webhook Support**: Notifications for transfer events
-
-### Performance Optimizations
-- **Caching**: Cache frequently accessed NFT data
-- **Batch Updates**: Optimize database operations
-- **Async Processing**: Handle high-volume transfer requests
-
-## Support and Troubleshooting
-
-### Common Issues
-1. **Transfer Fails**: Check admin private key and network connectivity
-2. **Database Errors**: Verify MongoDB connection and schema
-3. **Ownership Issues**: Confirm NFT ownership on blockchain
-
-### Debug Mode
-Enable detailed logging by setting environment variable:
-```bash
-export DEBUG_NFT_TRANSFER=true
-```
-
-### Contact
-For technical support or questions about the NFT transfer system, refer to the main project documentation or contact the development team.
+1. **Batch Transfers**: Transfer multiple tickets at once
+2. **Transfer Limits**: Rate limiting and daily transfer caps
+3. **Advanced Notifications**: Push notifications for transfers
+4. **Transfer Scheduling**: Schedule transfers for future dates
+5. **Multi-Signature Support**: Require multiple approvals for transfers

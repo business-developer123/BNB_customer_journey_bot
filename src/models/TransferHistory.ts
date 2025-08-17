@@ -4,11 +4,11 @@ export interface ITransferHistory extends Document {
     transferId: string;
     mintAddress: string;
     fromTelegramId: number;
-    toTelegramId: number;
+    toTelegramId: number | null; // Can be null for external wallet transfers
     fromWalletAddress: string;
     toWalletAddress: string;
     transactionSignature: string;
-    transferType: 'user_to_user' | 'system_to_user' | 'user_to_system';
+    transferType: 'user_to_user' | 'system_to_user' | 'user_to_system' | 'user_to_external';
     transferReason?: string;
     transferredAt: Date;
     blockNumber?: number;
@@ -41,7 +41,7 @@ const TransferHistorySchema = new Schema<ITransferHistory>({
     },
     toTelegramId: { 
         type: Number, 
-        required: true, 
+        required: false, // Allow null for external wallet transfers
         index: true 
     },
     fromWalletAddress: { 
@@ -59,7 +59,7 @@ const TransferHistorySchema = new Schema<ITransferHistory>({
     },
     transferType: { 
         type: String, 
-        enum: ['user_to_user', 'system_to_user', 'user_to_system'], 
+        enum: ['user_to_user', 'system_to_user', 'user_to_system', 'user_to_external'], 
         required: true,
         default: 'user_to_user'
     },
